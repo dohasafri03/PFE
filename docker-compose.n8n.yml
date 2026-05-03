@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  # ── API FastAPI (Pipeline Alexsys) ─────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: marche-ai-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./dossiers_generes:/app/dossiers_generes
+      - ./logs:/app/logs
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks:
+      - marche-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── n8n (Orchestrateur Workflow) ───────────────────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: marche-ai-n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/home/node/workflows
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=alexsys
+      - N8N_BASIC_AUTH_PASSWORD=alexsys2026
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=Africa/Casablanca
+      - TZ=Africa/Casablanca
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+      # API URL for n8n workflow nodes (Docker internal network)
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - marche-net
+    restart: unless-stopped
+
+networks:
+  marche-net:
+    driver: bridge
+
+volumes:
+  n8n_data:

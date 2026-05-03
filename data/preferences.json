@@ -1,0 +1,12 @@
+{
+  "admin": {
+    "preferred_domains": [
+      "Cloud",
+      "Data"
+    ],
+    "budget_min": 1500000.0,
+    "budget_max": 7200000.0,
+    "deadline_tolerance_days": 5,
+    "enable_ai_learning": false
+  }
+}

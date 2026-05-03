@@ -1,0 +1,24 @@
+# === Pipeline (core/pipeline.py) ===
+python-docx==1.2.0         # Génération DOCX (dossiers technique + administratif)
+openpyxl==3.1.5            # Export Excel stylisé
+PyMuPDF==1.27.2            # Extraction texte PDF (CPS)
+pytesseract==0.3.13        # OCR via Tesseract (pour PDF scannés)
+Pillow==12.1.1             # Manipulation images (OCR)
+
+# === Scraper (scripts/scrape_deep.py) ===
+requests==2.32.5           # HTTP requests
+beautifulsoup4==4.14.3     # HTML parsing
+playwright==1.58.0         # Navigation dynamique marchespublics.gov.ma
+
+# === DB (optionnel) ===
+SQLAlchemy>=2.0.0          # SQLite via ORM (Dashboard/API persistence)
+
+# === RAG (core/rag_engine.py) ===
+chromadb>=1.5.0            # Vector store local (persistant)
+sentence-transformers>=5.0 # Embeddings multilingues (local)
+openai>=2.0.0              # LLM fallback (API cloud)
+ollama>=0.6.0              # Client Ollama (LLM local)
+groq>=0.25.0               # LLM Groq (API gratuite, Llama/Mixtral)
+
+# === NLP (optionnel) ===
+# spacy>=3.7.0             # Décommenter si NLP activé (+ python -m spacy download fr_core_news_md)

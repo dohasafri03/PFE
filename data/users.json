@@ -1,0 +1,59 @@
+{
+  "admin": {
+    "role": "Admin",
+    "display_name": "Doha",
+    "avatar_url": "",
+    "salt": "TDPsMFL0BVTW4TdzugJiIw==",
+    "password_hash": "5Izbu9L64phe/vEvH3lRZ9EsdVTQrD6eLVUnh1b/fJg=",
+    "profile": "GLOBAL"
+  },
+  "global": {
+    "display_name": "global",
+    "role": "GLOBAL",
+    "profile": "GLOBAL",
+    "avatar_url": "",
+    "salt": "rv/jOEdUrPKLKg3SGmp3aA==",
+    "password_hash": "rMG9v/TW8knHS4KrRyGCHtdi2sZdWPB5RXbbxya2uMI="
+  },
+  "ai": {
+    "display_name": "ai",
+    "role": "AI",
+    "profile": "AI",
+    "avatar_url": "",
+    "salt": "P4raKI7g5qp0T3UcrNBcNA==",
+    "password_hash": "fSqDnHhiFEfdzKZJIldnqkghvmNHf7RWN0WC4g3zLfI=",
+    "sub_profile": "AI"
+  },
+  "data": {
+    "display_name": "data",
+    "role": "DATA",
+    "profile": "DATA",
+    "avatar_url": "",
+    "salt": "6cPFZDjxZqcSIh0L+IoPaA==",
+    "password_hash": "wzW+BjuILocd8xlPtmco3CfQSqe7X9CQfQYH9vLmXVE="
+  },
+  "cloud": {
+    "display_name": "cloud",
+    "role": "CLOUD",
+    "profile": "CLOUD",
+    "avatar_url": "",
+    "salt": "iW6xc3wyQDq6dIalKbjHlA==",
+    "password_hash": "a1OY89eXvgCK5T1t6RdrP3Rm/J4MhsPVaaoek4JtI1o="
+  },
+  "dev": {
+    "display_name": "dev",
+    "role": "DEV",
+    "profile": "DEV",
+    "avatar_url": "",
+    "salt": "IuwoKRV9KofABfgh6vr2vA==",
+    "password_hash": "jx4r3Ze9s5rxNOqt4omJNdA5LZ2MS2+5InLqZprb1C4="
+  },
+  "cyber": {
+    "display_name": "cyber",
+    "role": "CYBERSECURITY",
+    "profile": "CYBERSECURITY",
+    "avatar_url": "",
+    "salt": "VJ61BmTGfbWGabqMjxm51g==",
+    "password_hash": "6R8TCIvadAnhDpdKgLL1ZfwcMrIrpUPqRGxQRV+7ky4="
+  }
+}

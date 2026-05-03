@@ -1,0 +1,691 @@
+{
+  "name": "Marche AI - Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "node-cron",
+      "name": "Cron 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/health' }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-health",
+      "name": "Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-health",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-check-health",
+      "name": "API OK ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/scrape' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fast_mode\": true,\n  \"concurrency\": 5,\n  \"webhook_url\": \"{{ $execution.resumeUrl }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-scrape",
+      "name": "Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/pipeline/filter-it' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"csv_path\": ($json.last_csv || \"\") } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "node-filter-it",
+      "name": "Filtrer IT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/scrape/status' }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-scrape-status",
+      "name": "Scrape Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-scrape-not-running",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-has-last-csv",
+              "leftValue": "={{ $json.last_csv }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-scrape-done",
+      "name": "Scrape done ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resumeOption": "afterTimeInterval",
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "node-wait-10s",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-relevant",
+              "leftValue": "={{ $json.total_it }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-has-results",
+      "name": "IT trouvees ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/pipeline/run-lite-sync' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"generate_dossiers\": false,\n  \"use_rag\": false,\n  \"enrich_cps\": false,\n  \"all_priorities\": true\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "node-pipeline",
+      "name": "Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2140,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/pipeline/generate-dossiers-async' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"use_rag\": false,\n  \"convert_pdf\": true,\n  \"rate_limit\": 3.0,\n  \"min_priority\": \"WARM\",\n  \"include_liked\": true,\n  \"only_active\": true,\n  \"max_consultations\": 120,\n  \"skip_existing\": true\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "node-gen-dossiers",
+      "name": "Dossiers RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2360,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-summary",
+              "name": "summary",
+              "value": "=Pipeline termine\n\nScraping\n  Consultations brutes : {{ $(\"Pipeline\").item.json.summary.total }}\n  Consultations qualifiees (HOT/WARM/COLD) : {{ $(\"Pipeline\").item.json.summary.relevant }}\n\nRepartition par domaine\n  AI             : {{ $(\"Filtrer IT\").item.json.par_domaine.AI ?? 0 }}\n  Data           : {{ $(\"Filtrer IT\").item.json.par_domaine.Data ?? 0 }}\n  BI             : {{ $(\"Filtrer IT\").item.json.par_domaine.BI ?? 0 }}\n  Dev            : {{ $(\"Filtrer IT\").item.json.par_domaine.Dev ?? 0 }}\n  Cloud          : {{ $(\"Filtrer IT\").item.json.par_domaine.Cloud ?? 0 }}\n  Cybersecurity  : {{ $(\"Filtrer IT\").item.json.par_domaine.Cybersecurity ?? 0 }}\n\nDossiers\n  Generation : lancee en arriere-plan (async)\n\nDate : {{ $now.setZone('Africa/Casablanca').toFormat('dd/LL/yyyy HH:mm') }}",
+              "type": "string"
+            },
+            {
+              "id": "set-summary-html",
+              "name": "summary_html",
+              "value": "=('\\n' +'<div style=\"font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:#0b1f3b;\">' +'<strong>AI Procurement Intelligence Report</strong><br/>' +'Run: ' + ($now.setZone ? $now.setZone('Africa/Casablanca').toFormat('dd/LL/yyyy HH:mm') : '') +'</div>')",
+              "type": "string"
+            },
+            {
+              "id": "set-total-it",
+              "name": "total_it",
+              "value": "={{ $(\"Pipeline\").item.json.summary.relevant }}",
+              "type": "number"
+            },
+            {
+              "id": "set-total-brutes",
+              "name": "total_brutes",
+              "value": "={{ $(\"Pipeline\").item.json.summary.total }}",
+              "type": "number"
+            },
+            {
+              "id": "set-email-html",
+              "name": "email_html",
+              "value": "=(() => {\n  const esc = (s) => String(s ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n  const escAttr = (s) => esc(s).replace(/\"/g, '&quot;');\n\n  const fmtMoney = (n) => {\n    const v = Number(n);\n    if (!Number.isFinite(v) || v <= 0) return 'N/A';\n    const s = v.toFixed(2);\n    const parts = s.split('.');\n    const t = parts[0];\n    let out = '';\n    for (let i = t.length; i > 0; i -= 3) {\n      const start = Math.max(0, i - 3);\n      out = t.slice(start, i) + (out ? ' ' + out : '');\n    }\n    return out + ',' + parts[1] + ' DH';\n  };\n\n  const fmtDate = (d) => {\n    if (!d) return 'N/A';\n    const dt = new Date(d);\n    if (isNaN(dt)) return esc(d);\n    const dd = String(dt.getDate()).padStart(2, '0');\n    const mm = String(dt.getMonth() + 1).padStart(2, '0');\n    return dd + '/' + mm + '/' + dt.getFullYear();\n  };\n\n  const badgeHtml = (lvl) => {\n    const L = String(lvl || '').toUpperCase();\n    const label = (L === 'HOT' || L === 'WARM' || L === 'COLD') ? L : 'COLD';\n    const bg = (label === 'HOT') ? '#b42318' : (label === 'WARM') ? '#f97316' : '#6b7280';\n    return '<span style=\"display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:11px;line-height:14px;color:#fff;background:' + bg + ';\">' + esc(label) + '</span>';\n  };\n\n  // Luxon DateTime in n8n: $now\n  let runStr = '';\n  try {\n    runStr = $now.setZone('Africa/Casablanca').toFormat('dd/LL/yyyy HH:mm');\n  } catch (e) {\n    runStr = (new Date()).toLocaleString();\n  }\n\n  const raw = $(\"Top Opportunities\").item.json.relevant_consultations || [];\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n\n  const active = raw.filter((o) => {\n    if (!o || !o.deadline) return true;\n    const d = new Date(o.deadline);\n    if (isNaN(d)) return true;\n    d.setHours(0, 0, 0, 0);\n    return d >= today;\n  });\n\n  const totalQualified = active.length;\n  const hotCount = active.filter((o) => String((o && o.priority) || '').toUpperCase() === 'HOT').length;\n\n  const totalBudget = active.reduce((a, o) => a + (Number((o && o.budget) || 0) || 0), 0);\n\n  const deadlines = active\n    .map((o) => o && o.deadline)\n    .filter(Boolean)\n    .map((d) => new Date(d))\n    .filter((d) => !isNaN(d));\n\n  let nextDeadline = 'N/A';\n  if (deadlines.length) {\n    const min = new Date(Math.min.apply(null, deadlines));\n    nextDeadline = fmtDate(min.toISOString());\n  }\n\n  const urgent = active.filter((o) => {\n    if (!o || !o.deadline) return false;\n    const d = new Date(o.deadline);\n    if (isNaN(d)) return false;\n    d.setHours(0, 0, 0, 0);\n    const diffDays = Math.round((d.getTime() - today.getTime()) / 86400000);\n    return diffDays >= 0 && diffDays < 7;\n  }).slice(0, 8);\n\n  const top = active.slice(0, 10);\n\n  const dashUrl = ($env && $env.DASHBOARD_URL) ? String($env.DASHBOARD_URL) : 'http://localhost:5173';\n\n  let rows = '';\n  if (!top.length) {\n    rows = '<tr><td colspan=\"6\" style=\"padding:12px 10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6b82;\">Aucune opportunite qualifiee active.</td></tr>';\n  } else {\n    for (let i = 0; i < top.length; i++) {\n      const o = top[i] || {};\n      const bg = (i % 2 === 0) ? '#ffffff' : '#fbfcfe';\n      const ref = esc(o.reference || o.id || 'N/A');\n      const org = esc(o.acheteur || o.organization || 'N/A');\n      const budget = esc(fmtMoney(o.budget));\n      const deadline = esc(fmtDate(o.deadline));\n      const level = badgeHtml(o.priority);\n      const url = String(o.url || '').trim();\n      const urlHtml = url\n        ? ('<a href=\"' + escAttr(url) + '\" target=\"_blank\" style=\"color:#1e3a8a;text-decoration:none;font-weight:700;\">Voir</a>')\n        : '<span style=\"color:#9aa6b2;\">N/A</span>';\n\n      rows += ''\n        + '<tr style=\"background:' + bg + ';\">'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + ref + '</td>'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + org + '</td>'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;white-space:nowrap;\">' + budget + '</td>'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;white-space:nowrap;\">' + deadline + '</td>'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + level + '</td>'\n        + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;\">' + urlHtml + '</td>'\n        + '</tr>';\n    }\n  }\n\n  let urgentBlock = '';\n  if (urgent.length) {\n    let items = '';\n    for (let i = 0; i < urgent.length; i++) {\n      const o = urgent[i] || {};\n      items += '<div style=\"margin:0 0 6px 0;\">&#8226; <strong>'\n        + esc(o.reference || o.id || 'N/A')\n        + '</strong> &#8212; '\n        + esc(o.acheteur || o.organization || 'N/A')\n        + ' <span style=\"color:#9a3a3a;\">(' + esc(fmtDate(o.deadline)) + ')</span></div>';\n    }\n\n    urgentBlock = ''\n      + '<div style=\"margin-top:18px;border:1px solid #ffe1e1;background:#fff5f5;border-radius:12px;padding:12px;\">'\n      + '<div style=\"font-family:Arial,Helvetica,sans-serif;font-weight:800;color:#8b1d1d;font-size:13px;\">Deadlines urgentes (&lt; 7 jours)</div>'\n      + '<div style=\"font-family:Arial,Helvetica,sans-serif;color:#6b2b2b;font-size:12px;margin-top:8px;\">'\n      + items\n      + '</div>'\n      + '</div>';\n  }\n\n  const html = ''\n    + '<!doctype html>'\n    + '<html lang=\"fr\" xmlns=\"http://www.w3.org/1999/xhtml\">'\n    + '<head>'\n    + '  <meta charset=\"utf-8\" />'\n    + '  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />'\n    + '  <meta http-equiv=\"x-ua-compatible\" content=\"ie=edge\" />'\n    + '  <title>AI Procurement Intelligence</title>'\n    + '</head>'\n    + '<body style=\"margin:0;padding:0;background-color:#f3f5f8;\">'\n    + '  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f3f5f8;\">'\n    + '    <tr>'\n    + '      <td align=\"center\" style=\"padding:24px 12px;\">'\n    + '        <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"600\" style=\"width:600px;max-width:600px;background:#ffffff;border:1px solid #e6eaf0;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.08);\">'\n\n    + '          <tr>'\n    + '            <td style=\"background:#0b1f3b;background-image:linear-gradient(135deg,#0b1f3b 0%,#1e3a8a 100%);padding:22px;\">'\n    + '              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">'\n    + '                <tr>'\n    + '                  <td>'\n    + '                    <div style=\"font-family:Arial,Helvetica,sans-serif;color:#ffffff;font-size:18px;font-weight:800;letter-spacing:.2px;\">AI Procurement Intelligence</div>'\n    + '                    <div style=\"font-family:Arial,Helvetica,sans-serif;color:#c9d4e5;font-size:13px;margin-top:6px;\">Automated IT Tender Monitoring</div>'\n    + '                    <div style=\"font-family:Arial,Helvetica,sans-serif;color:#c9d4e5;font-size:12px;margin-top:10px;\">Run: <strong>' + esc(runStr) + '</strong></div>'\n    + '                  </td>'\n    + '                  <td align=\"right\" valign=\"top\">'\n    + '                    <span style=\"display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;letter-spacing:.6px;padding:6px 10px;border-radius:999px;\">AUTO REPORT</span>'\n    + '                  </td>'\n    + '                </tr>'\n    + '              </table>'\n    + '            </td>'\n    + '          </tr>'\n\n    + '          <tr>'\n    + '            <td style=\"padding:18px;\">'\n\n    + '              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">'\n    + '                <tr>'\n    + '                  <td style=\"padding:6px;\">'\n    + '                    <div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#f8fafc;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n    + '                      <div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Total Opportunities (qualifiees)</div>'\n    + '                      <div style=\"font-size:22px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(totalQualified) + '</div>'\n    + '                    </div>'\n    + '                  </td>'\n    + '                  <td style=\"padding:6px;\">'\n    + '                    <div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#f8fafc;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n    + '                      <div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Opportunites IT</div>'\n    + '                      <div style=\"font-size:22px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(totalQualified) + '</div>'\n    + '                    </div>'\n    + '                  </td>'\n    + '                  <td style=\"padding:6px;\">'\n    + '                    <div style=\"border:1px solid #ffe1e1;border-radius:12px;background:#fff5f5;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n    + '                      <div style=\"font-size:11px;color:#8b4b4b;text-transform:uppercase;letter-spacing:.5px;\">HOT</div>'\n    + '                      <div style=\"font-size:22px;color:#b42318;font-weight:800;margin-top:6px;\">' + esc(hotCount) + '</div>'\n    + '                    </div>'\n    + '                  </td>'\n    + '                </tr>'\n    + '              </table>'\n\n    + '              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:8px;\">'\n    + '                <tr>'\n    + '                  <td style=\"padding:6px;\">'\n    + '                    <div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#ffffff;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n    + '                      <div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Total Budget (qualifie)</div>'\n    + '                      <div style=\"font-size:16px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(fmtMoney(totalBudget)) + '</div>'\n    + '                    </div>'\n    + '                  </td>'\n    + '                  <td style=\"padding:6px;\">'\n    + '                    <div style=\"border:1px solid #ffe8d2;border-radius:12px;background:#fff7ed;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n    + '                      <div style=\"font-size:11px;color:#7a532e;text-transform:uppercase;letter-spacing:.5px;\">Next Deadline</div>'\n    + '                      <div style=\"font-size:16px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(nextDeadline) + '</div>'\n    + '                    </div>'\n    + '                  </td>'\n    + '                </tr>'\n    + '              </table>'\n\n    + '              <div style=\"margin-top:18px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:800;color:#0b1f3b;\">Top Opportunities</div>'\n    + '              <div style=\"font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6b82;margin-top:4px;\">Top 10 opportunites qualifiees (deadline en cours).</div>'\n\n    + '              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:10px;border:1px solid #e6eaf0;border-radius:12px;overflow:hidden;border-collapse:separate;\">'\n    + '                <tr>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Reference</td>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Organisme</td>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Budget</td>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Deadline</td>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Niveau</td>'\n    + '                  <td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">URL</td>'\n    + '                </tr>'\n    + rows\n    + '              </table>'\n\n    + urgentBlock\n\n    + '              <div style=\"margin-top:18px;text-align:center;\">'\n    + '                <a href=\"' + escAttr(dashUrl) + '\" target=\"_blank\" style=\"display:inline-block;background:#f97316;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:46px;font-weight:800;padding:0 22px;border-radius:12px;border:1px solid #f97316;\">Voir le Dashboard</a>'\n    + '              </div>'\n\n    + '              <div style=\"margin-top:14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:#7a8aa2;text-align:center;\">'\n    + '                Rapport genere automatiquement par AI Monitoring Pipeline'\n    + '              </div>'\n\n    + '            </td>'\n    + '          </tr>'\n\n    + '        </table>'\n    + '      </td>'\n    + '    </tr>'\n    + '  </table>'\n    + '</body>'\n    + '</html>';\n\n  return html;\n})()",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "node-summary",
+      "name": "Resume",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2580,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "Marche AI - Veille IT <dohasafri7@gmail.com>",
+        "toEmail": "doha.safri@emsi-edu.ma",
+        "subject": "=Rapport Veille IT - {{ $json.total_qualified_active ?? 0 }} opportunites ({{ $now.setZone('Africa/Casablanca').toFormat('dd/LL/yyyy HH:mm') }})",
+        "emailType": "html",
+        "html": "={{ $json.email_html }}",
+        "text": "={{ $json.summary || \"AI Procurement Intelligence Report\" }}",
+        "message": "={{ $json.email_html }}"
+      },
+      "id": "node-email",
+      "name": "Rapport",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2800,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-no-results",
+              "name": "message",
+              "value": "=0 IT.\\n\\nFiltrer IT.total_it={{ $(\"Filtrer IT\").item.json.total_it }}\\nFiltrer IT.message={{ $(\"Filtrer IT\").item.json.message ?? '' }}\\nFiltrer IT.csv_source={{ $(\"Filtrer IT\").item.json.csv_source ?? '' }}\\nScrape Status.last_csv={{ $(\"Scrape Status\").item.json.last_csv ?? '' }}\\nScrape Status.running={{ $(\"Scrape Status\").item.json.running ?? '' }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "node-no-results",
+      "name": "0 IT",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2140,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-err-msg",
+              "name": "error_message",
+              "value": "=Erreur scraping : {{ $(\"Wait Webhook\").item.json.body.scraping.error }}\\nVerifier les logs API.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "node-scrape-fail",
+      "name": "Log Erreur",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1700,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-api-down",
+              "name": "error_message",
+              "value": "API non disponible. Lancer : python -m api.main",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "node-api-down",
+      "name": "API Down",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        680,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_BASE_URL || 'http://127.0.0.1:8011') + '/pipeline/score' }}",
+        "responseFormat": "json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"csv_path\": ($json.last_csv || \"\") } }}",
+        "options": {
+          "timeout": 180000,
+          "fullResponse": false
+        }
+      },
+      "id": "node-top-opportunities",
+      "name": "Top Opportunities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2470,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build a premium HTML email from the latest scored opportunities.\n// Runs once per incoming item (expects /pipeline/score output shape).\n\nconst raw = Array.isArray($json.relevant_consultations) ? $json.relevant_consultations : [];\n\nconst esc = (s) => String(s ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\nconst escAttr = (s) => esc(s).replace(/\\\"/g, '&quot;');\n\nconst fmtMoney = (n) => {\n  const v = Number(n);\n  if (!Number.isFinite(v) || v <= 0) return 'N/A';\n  const s = v.toFixed(2);\n  const parts = s.split('.');\n  const t = parts[0];\n  let out = '';\n  for (let i = t.length; i > 0; i -= 3) {\n    const start = Math.max(0, i - 3);\n    out = t.slice(start, i) + (out ? ' ' + out : '');\n  }\n  return out + ',' + parts[1] + ' DH';\n};\n\nconst toDate = (d) => {\n  if (!d) return null;\n  const dt = new Date(d);\n  return isNaN(dt) ? null : dt;\n};\n\nconst fmtDate = (d) => {\n  const dt = (d instanceof Date) ? d : toDate(d);\n  if (!dt) return 'N/A';\n  const dd = String(dt.getDate()).padStart(2, '0');\n  const mm = String(dt.getMonth() + 1).padStart(2, '0');\n  return dd + '/' + mm + '/' + dt.getFullYear();\n};\n\nconst badgeHtml = (lvl) => {\n  const L = String(lvl || '').toUpperCase();\n  const label = (L === 'HOT' || L === 'WARM' || L === 'COLD') ? L : 'COLD';\n  const bg = (label === 'HOT') ? '#b42318' : (label === 'WARM') ? '#f97316' : '#6b7280';\n  return '<span style=\"display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:11px;line-height:14px;color:#fff;background:' + bg + ';\">' + esc(label) + '</span>';\n};\n\n// Casablanca time string (works even if container is in UTC)\nlet runStr;\ntry {\n  runStr = new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Casablanca' });\n} catch (e) {\n  runStr = new Date().toLocaleString();\n}\n\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\n\n// Keep only active opportunities (deadline not passed). If deadline missing/unparseable -> keep.\nconst active = raw.filter((o) => {\n  const dt = toDate(o && o.deadline);\n  if (!dt) return true;\n  dt.setHours(0, 0, 0, 0);\n  return dt >= today;\n});\n\nconst totalQualifiedActive = active.length;\nconst hotCount = active.filter((o) => String((o && o.priority) || '').toUpperCase() === 'HOT').length;\nconst totalBudget = active.reduce((a, o) => a + (Number((o && o.budget) || 0) || 0), 0);\n\nconst deadlines = active.map((o) => toDate(o && o.deadline)).filter(Boolean);\nlet nextDeadline = 'N/A';\nif (deadlines.length) {\n  deadlines.sort((a, b) => a.getTime() - b.getTime());\n  nextDeadline = fmtDate(deadlines[0]);\n}\n\nconst urgent = active\n  .filter((o) => {\n    const dt = toDate(o && o.deadline);\n    if (!dt) return false;\n    dt.setHours(0, 0, 0, 0);\n    const diffDays = Math.round((dt.getTime() - today.getTime()) / 86400000);\n    return diffDays >= 0 && diffDays < 7;\n  })\n  .slice(0, 8);\n\nconst top = active.slice(0, 10);\nconst dashUrl = (process.env.DASHBOARD_URL && String(process.env.DASHBOARD_URL)) || 'http://localhost:5173';\n\nlet rows = '';\nif (!top.length) {\n  rows = '<tr><td colspan=\"6\" style=\"padding:12px 10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6b82;\">Aucune opportunite qualifiee active.</td></tr>';\n} else {\n  for (let i = 0; i < top.length; i++) {\n    const o = top[i] || {};\n    const bg = (i % 2 === 0) ? '#ffffff' : '#fbfcfe';\n    const ref = esc(o.reference || o.id || 'N/A');\n    const org = esc(o.acheteur || o.organization || 'N/A');\n    const budget = esc(fmtMoney(o.budget));\n    const deadline = esc(fmtDate(o.deadline));\n    const level = badgeHtml(o.priority);\n    const url = String(o.url || '').trim();\n    const urlHtml = url\n      ? ('<a href=\"' + escAttr(url) + '\" target=\"_blank\" style=\"color:#1e3a8a;text-decoration:none;font-weight:700;\">Voir</a>')\n      : '<span style=\"color:#9aa6b2;\">N/A</span>';\n\n    rows += ''\n      + '<tr style=\"background:' + bg + ';\">'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + ref + '</td>'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + org + '</td>'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;white-space:nowrap;\">' + budget + '</td>'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;white-space:nowrap;\">' + deadline + '</td>'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#0b1f3b;\">' + level + '</td>'\n      + '<td style=\"padding:10px;border-top:1px solid #eef2f7;font-family:Arial,Helvetica,sans-serif;font-size:12px;\">' + urlHtml + '</td>'\n      + '</tr>';\n  }\n}\n\nlet urgentBlock = '';\nif (urgent.length) {\n  let items = '';\n  for (let i = 0; i < urgent.length; i++) {\n    const o = urgent[i] || {};\n    items += '<div style=\"margin:0 0 6px 0;\">&#8226; <strong>'\n      + esc(o.reference || o.id || 'N/A')\n      + '</strong> &#8212; '\n      + esc(o.acheteur || o.organization || 'N/A')\n      + ' <span style=\"color:#9a3a3a;\">(' + esc(fmtDate(o.deadline)) + ')</span></div>';\n  }\n  urgentBlock = ''\n    + '<div style=\"margin-top:18px;border:1px solid #ffe1e1;background:#fff5f5;border-radius:12px;padding:12px;\">'\n    + '<div style=\"font-family:Arial,Helvetica,sans-serif;font-weight:800;color:#8b1d1d;font-size:13px;\">Deadlines urgentes (&lt; 7 jours)</div>'\n    + '<div style=\"font-family:Arial,Helvetica,sans-serif;color:#6b2b2b;font-size:12px;margin-top:8px;\">'\n    + items\n    + '</div>'\n    + '</div>';\n}\n\nconst html = ''\n  + '<!doctype html>'\n  + '<html lang=\"fr\" xmlns=\"http://www.w3.org/1999/xhtml\">'\n  + '<head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />'\n  + '<meta http-equiv=\"x-ua-compatible\" content=\"ie=edge\" />'\n  + '<title>AI Procurement Intelligence</title></head>'\n  + '<body style=\"margin:0;padding:0;background-color:#f3f5f8;\">'\n  + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f3f5f8;\">'\n  + '<tr><td align=\"center\" style=\"padding:24px 12px;\">'\n  + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"600\" style=\"width:600px;max-width:600px;background:#ffffff;border:1px solid #e6eaf0;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.08);\">'\n\n  + '<tr><td style=\"background:#0b1f3b;background-image:linear-gradient(135deg,#0b1f3b 0%,#1e3a8a 100%);padding:22px;\">'\n  + '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>'\n  + '<td>'\n  + '<div style=\"font-family:Arial,Helvetica,sans-serif;color:#ffffff;font-size:18px;font-weight:800;letter-spacing:.2px;\">AI Procurement Intelligence</div>'\n  + '<div style=\"font-family:Arial,Helvetica,sans-serif;color:#c9d4e5;font-size:13px;margin-top:6px;\">Automated IT Tender Monitoring</div>'\n  + '<div style=\"font-family:Arial,Helvetica,sans-serif;color:#c9d4e5;font-size:12px;margin-top:10px;\">Run: <strong>' + esc(runStr) + '</strong></div>'\n  + '</td>'\n  + '<td align=\"right\" valign=\"top\"><span style=\"display:inline-block;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;letter-spacing:.6px;padding:6px 10px;border-radius:999px;\">AUTO REPORT</span></td>'\n  + '</tr></table>'\n  + '</td></tr>'\n\n  + '<tr><td style=\"padding:18px;\">'\n\n  + '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>'\n  + '<td style=\"padding:6px;\"><div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#f8fafc;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n  + '<div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Total Opportunities (qualifiees)</div>'\n  + '<div style=\"font-size:22px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(totalQualifiedActive) + '</div></div></td>'\n  + '<td style=\"padding:6px;\"><div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#f8fafc;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n  + '<div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Opportunites IT</div>'\n  + '<div style=\"font-size:22px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(totalQualifiedActive) + '</div></div></td>'\n  + '<td style=\"padding:6px;\"><div style=\"border:1px solid #ffe1e1;border-radius:12px;background:#fff5f5;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n  + '<div style=\"font-size:11px;color:#8b4b4b;text-transform:uppercase;letter-spacing:.5px;\">HOT</div>'\n  + '<div style=\"font-size:22px;color:#b42318;font-weight:800;margin-top:6px;\">' + esc(hotCount) + '</div></div></td>'\n  + '</tr></table>'\n\n  + '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:8px;\"><tr>'\n  + '<td style=\"padding:6px;\"><div style=\"border:1px solid #e7ecf3;border-radius:12px;background:#ffffff;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n  + '<div style=\"font-size:11px;color:#5a6b82;text-transform:uppercase;letter-spacing:.5px;\">Total Budget (qualifie)</div>'\n  + '<div style=\"font-size:16px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(fmtMoney(totalBudget)) + '</div></div></td>'\n  + '<td style=\"padding:6px;\"><div style=\"border:1px solid #ffe8d2;border-radius:12px;background:#fff7ed;padding:14px;font-family:Arial,Helvetica,sans-serif;\">'\n  + '<div style=\"font-size:11px;color:#7a532e;text-transform:uppercase;letter-spacing:.5px;\">Next Deadline</div>'\n  + '<div style=\"font-size:16px;color:#0b1f3b;font-weight:800;margin-top:6px;\">' + esc(nextDeadline) + '</div></div></td>'\n  + '</tr></table>'\n\n  + '<div style=\"margin-top:18px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:800;color:#0b1f3b;\">Top Opportunities</div>'\n  + '<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6b82;margin-top:4px;\">Top 10 opportunites qualifiees (deadline en cours).</div>'\n\n  + '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin-top:10px;border:1px solid #e6eaf0;border-radius:12px;overflow:hidden;border-collapse:separate;\">'\n  + '<tr>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Reference</td>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Organisme</td>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Budget</td>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Deadline</td>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">Niveau</td>'\n  + '<td style=\"background:#0f2a52;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:10px;\">URL</td>'\n  + '</tr>'\n  + rows\n  + '</table>'\n\n  + urgentBlock\n\n  + '<div style=\"margin-top:18px;text-align:center;\">'\n  + '<a href=\"' + escAttr(dashUrl) + '\" target=\"_blank\" style=\"display:inline-block;background:#f97316;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:46px;font-weight:800;padding:0 22px;border-radius:12px;border:1px solid #f97316;\">Voir le Dashboard</a>'\n  + '</div>'\n\n  + '<div style=\"margin-top:14px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:#7a8aa2;text-align:center;\">Rapport genere automatiquement par AI Monitoring Pipeline</div>'\n  + '</td></tr>'\n\n  + '</table>'\n  + '</td></tr></table>'\n  + '</body></html>';\n\nreturn {\n  json: {\n    ...$json,\n    total_qualified_active: totalQualifiedActive,\n    hot_active: hotCount,\n    next_deadline: nextDeadline,\n    total_budget_active: totalBudget,\n    email_html: html,\n  }\n};\n"
+      },
+      "id": "node-build-email",
+      "name": "Build Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2690,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-sync-error",
+              "leftValue": "={{ $json.body.scraping.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-scrape-sync-error",
+      "name": "Check Erreur Webhook",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resumeOption": "webhook",
+        "options": {}
+      },
+      "id": "node-wait-webhook-real",
+      "name": "Wait Webhook",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Cron 9h": {
+      "main": [
+        [
+          {
+            "node": "Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health": {
+      "main": [
+        [
+          {
+            "node": "API OK ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API OK ?": {
+      "main": [
+        [
+          {
+            "node": "Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "API Down",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape": {
+      "main": [
+        [
+          {
+            "node": "Wait Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrer IT": {
+      "main": [
+        [
+          {
+            "node": "IT trouvees ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IT trouvees ?": {
+      "main": [
+        [
+          {
+            "node": "Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "0 IT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Top Opportunities",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Dossiers RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dossiers RAG": {
+      "main": [
+        []
+      ]
+    },
+    "Resume": {
+      "main": [
+        []
+      ]
+    },
+    "Top Opportunities": {
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email": {
+      "main": [
+        [
+          {
+            "node": "Rapport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Erreur Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Erreur Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log Erreur",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scrape Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Status": {
+      "main": [
+        [
+          {
+            "node": "Scrape done ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape done ?": {
+      "main": [
+        [
+          {
+            "node": "Filtrer IT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Scrape Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marches-publics"
+    },
+    {
+      "name": "alexsys"
+    },
+    {
+      "name": "pipeline-v2"
+    }
+  ],
+  "pinData": {},
+  "versionId": "3"
+}

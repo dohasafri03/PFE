@@ -1,0 +1,312 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+ 
+@layer base {
+  :root {
+    /* Requested theme system (LIGHT) */
+    --background: 210 40% 98%; /* #F8FAFC */
+    --foreground: 222 47% 11%; /* #0F172A */
+
+    --card: 0 0% 100%; /* #FFFFFF */
+    --card-foreground: 222 47% 11%;
+ 
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+ 
+    /* Primary action: Purple */
+    --primary: 245 100% 69%; /* #6C63FF */
+    --primary-foreground: 0 0% 100%;
+ 
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+ 
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+ 
+    /* Accent: Orange */
+    --accent: 24 94% 53%; /* #F97316 */
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 32% 91%; /* #E2E8F0 */
+    --input: 214 32% 91%;
+    --ring: 266 61% 11%; /* #1a0b2e */
+ 
+    --radius: 0.5rem;
+  }
+ 
+  .dark {
+    /* Requested theme system (DARK) */
+    --background: 224 71% 4%;  /* #020617 */
+    --foreground: 214 32% 91%; /* #E2E8F0 */
+ 
+    --card: 211 69% 14%;       /* #0B1F3B */
+    --card-foreground: 214 32% 91%;
+ 
+    --popover: 211 69% 14%;
+    --popover-foreground: 214 32% 91%;
+ 
+    --primary: 245 100% 69%; /* #6C63FF */
+    --primary-foreground: 0 0% 100%;
+ 
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 214 32% 91%;
+ 
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+ 
+    --accent: 24 94% 53%; /* #F97316 */
+    --accent-foreground: 0 0% 100%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+ 
+    /* subtle borders in dark (rgba(255,255,255,0.08)) */
+    --border: 0 0% 100% / 0.08;
+    --input: 0 0% 100% / 0.08;
+    --ring: 266 61% 11%; /* #1a0b2e */
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground transition-colors duration-200;
+    overflow-x: hidden;
+  }
+
+  /* Text selection (avoid default blue highlight) */
+  ::selection {
+    background: #1a0b2e;
+    color: #ffffff;
+  }
+
+  input::selection,
+  textarea::selection {
+    background: #1a0b2e;
+    color: #ffffff;
+  }
+
+  /* Date input: hide native right calendar icon; keep selection accent mauve */
+  input[type="date"] {
+    accent-color: #1a0b2e;
+    color: #1a0b2e;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    opacity: 0;
+    display: none;
+  }
+
+  /* Ensure the inline date placeholder / parts follow the mauve color (WebKit) */
+  input[type="date"]::-webkit-datetime-edit,
+  input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+  input[type="date"]::-webkit-datetime-edit-text,
+  input[type="date"]::-webkit-datetime-edit-month-field,
+  input[type="date"]::-webkit-datetime-edit-day-field,
+  input[type="date"]::-webkit-datetime-edit-year-field {
+    color: inherit;
+  }
+
+  .dark input[type="date"] {
+    color: rgba(255,255,255,0.92);
+  }
+
+  #root {
+    @apply min-h-screen w-full min-w-0;
+  }
+}
+
+@layer components {
+  /* Base card style (utilities like `bg-*` must be able to override) */
+  .alexsys-card-base {
+    @apply rounded-2xl border;
+    background-color: hsl(var(--card));
+    border-color: hsl(var(--border));
+    box-shadow:
+      0 0 0 1px rgba(11,31,59,0.04),
+      0 12px 34px rgba(11,31,59,0.10);
+  }
+
+  .dark .alexsys-card-base {
+    background-color: hsl(var(--card));
+    border-color: rgba(255,255,255,0.08);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.08),
+      0 14px 50px rgba(0,0,0,0.38);
+  }
+
+  /* Glassmorphism variant (used by Login card) */
+  .alexsys-card-base.alexsys-glass {
+    background: linear-gradient(
+      135deg,
+      rgba(255,255,255,0.10) 0%,
+      rgba(255,255,255,0.04) 45%,
+      rgba(255,255,255,0.08) 100%
+    );
+    border-color: rgba(255,255,255,0.16);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.06),
+      0 18px 70px rgba(0,0,0,0.45),
+      0 0 36px rgba(108,99,255,0.16);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+  }
+
+  .alexsys-card-base.alexsys-glass::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+      radial-gradient(900px 320px at 15% 10%, rgba(0,194,209,0.18), transparent 60%),
+      radial-gradient(700px 280px at 85% 30%, rgba(108,99,255,0.20), transparent 55%);
+    opacity: 0.55;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+
+  .dark .alexsys-card-base.alexsys-glass {
+    background: linear-gradient(
+      135deg,
+      rgba(255,255,255,0.08) 0%,
+      rgba(255,255,255,0.03) 45%,
+      rgba(255,255,255,0.06) 100%
+    );
+    border-color: rgba(255,255,255,0.14);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.06),
+      0 22px 90px rgba(0,0,0,0.55),
+      0 0 44px rgba(0,194,209,0.10);
+  }
+}
+
+@layer utilities {
+  .alexsys-app-bg {
+    /* Light default */
+    background:
+      radial-gradient(900px 520px at 10% 0%, rgba(108,99,255,0.16), transparent 62%),
+      radial-gradient(760px 460px at 92% 10%, rgba(249,115,22,0.10), transparent 58%),
+      radial-gradient(720px 420px at 50% 100%, rgba(11,31,59,0.10), transparent 65%),
+      linear-gradient(180deg, #F6F8FF 0%, #EEF2FF 100%);
+  }
+
+  .dark .alexsys-app-bg {
+    background:
+      radial-gradient(1200px 600px at 15% 0%, rgba(108,99,255,0.20), transparent 60%),
+      radial-gradient(900px 500px at 85% 10%, rgba(249,115,22,0.14), transparent 55%),
+      radial-gradient(700px 420px at 55% 100%, rgba(11,31,59,0.55), transparent 60%),
+      linear-gradient(180deg, #050915 0%, #02030A 100%);
+  }
+
+  .alexsys-card {
+    @apply bg-card/70 backdrop-blur border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.30)];
+  }
+
+  .alexsys-glow {
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.10),
+      0 10px 30px rgba(0,0,0,0.35),
+      0 0 28px rgba(108,99,255,0.20);
+  }
+
+  .dark .alexsys-card {
+    @apply border-white/10;
+  }
+
+  :root .alexsys-card {
+    border-color: rgba(11, 31, 59, 0.10);
+    box-shadow:
+      0 0 0 1px rgba(11,31,59,0.06),
+      0 14px 40px rgba(11,31,59,0.10);
+  }
+
+  :root .alexsys-glow {
+    box-shadow:
+      0 0 0 1px rgba(11,31,59,0.10),
+      0 16px 46px rgba(11,31,59,0.12),
+      0 0 32px rgba(108,99,255,0.16);
+  }
+
+  .alexsys-surface {
+    @apply border;
+    background: color-mix(in srgb, hsl(var(--background)) 80%, white 20%);
+    border-color: hsl(var(--border));
+    box-shadow: 0 16px 50px rgba(11,31,59,0.10);
+  }
+
+  .dark .alexsys-surface {
+    background: color-mix(in srgb, hsl(var(--background)) 60%, black 40%);
+    border-color: rgba(255,255,255,0.08);
+    box-shadow: 0 16px 60px rgba(0,0,0,0.40);
+  }
+
+  @keyframes alexsys-gradient-pan {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  .alexsys-animated-header {
+    position: relative;
+  }
+
+  .alexsys-animated-header::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    background:
+      linear-gradient(
+        90deg,
+        rgba(255,255,255,0.08) 0%,
+        rgba(108,99,255,0.22) 25%,
+        rgba(249,115,22,0.18) 55%,
+        rgba(59,130,246,0.20) 78%,
+        rgba(255,255,255,0.08) 100%
+      );
+    background-size: 300% 300%;
+    animation: alexsys-gradient-pan 8s ease-in-out infinite;
+    opacity: 0.55;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .alexsys-animated-header {
+      animation: none !important;
+    }
+    .alexsys-animated-header::before {
+      animation: none !important;
+    }
+  }
+
+  @keyframes alexsys-text-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  .alexsys-animated-text {
+    background-image: linear-gradient(90deg, #00C2D1 0%, #3B82F6 35%, #6C63FF 70%, #1a0b2e 100%);
+    background-size: 220% 220%;
+    animation: alexsys-text-shift 6.5s ease-in-out infinite;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .alexsys-animated-text {
+      animation: none !important;
+    }
+  }
+}

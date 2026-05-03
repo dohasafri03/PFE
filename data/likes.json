@@ -1,0 +1,78 @@
+{
+  "01/2026": {
+    "liked": false,
+    "updated_at": "2026-03-23T01:55:20.467784"
+  },
+  "04/2026/DSIN": {
+    "liked": false,
+    "updated_at": "2026-03-23T01:55:18.669572"
+  },
+  "03/2026/CNOPS": {
+    "liked": false,
+    "updated_at": "2026-03-23T01:55:17.079724"
+  },
+  "51/2026/SAO": {
+    "liked": false,
+    "updated_at": "2026-03-24T09:01:54.379293"
+  },
+  "04/26/RRSK": {
+    "liked": true,
+    "updated_at": "2026-03-24T09:02:54.373496"
+  },
+  "05/2026/DSIN": {
+    "liked": false,
+    "updated_at": "2026-03-24T09:03:00.996451"
+  },
+  "01/2026/FAATLV": {
+    "liked": true,
+    "updated_at": "2026-03-23T21:20:31.224158"
+  },
+  "11/2026": {
+    "liked": false,
+    "updated_at": "2026-03-26T11:22:27.339659"
+  },
+  "02/CSEFRS/2026": {
+    "liked": true,
+    "updated_at": "2026-03-24T09:01:53.181318"
+  },
+  "07/DAM/S/2026": {
+    "liked": true,
+    "updated_at": "2026-03-24T09:02:37.279598"
+  },
+  "9/2026/DSIN": {
+    "liked": true,
+    "updated_at": "2026-03-24T09:03:50.181911"
+  },
+  "11/2026/DSIN": {
+    "liked": false,
+    "updated_at": "2026-03-26T15:19:43.706225"
+  },
+  "02/LOGDEV2026": {
+    "liked": true,
+    "updated_at": "2026-04-27T09:01:51.286144"
+  },
+  "16/2026": {
+    "liked": false,
+    "updated_at": "2026-04-23T15:12:38.650893"
+  },
+  "20/2026/MEF/AC/MAIN": {
+    "liked": false,
+    "updated_at": "2026-04-23T16:30:39.674273"
+  },
+  "01/2026/DRA": {
+    "liked": false,
+    "updated_at": "2026-04-24T01:21:49.102739"
+  },
+  "04/DSID/2026": {
+    "liked": true,
+    "updated_at": "2026-04-24T10:16:46.692691"
+  },
+  "17/2026": {
+    "liked": true,
+    "updated_at": "2026-04-24T11:11:47.560307"
+  },
+  "14/2026": {
+    "liked": false,
+    "updated_at": "2026-04-30T09:01:49.783094"
+  }
+}
