@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Moon, Sun, Bell, ChevronDown, LayoutDashboard, FileText } from "lucide-react"
+import { Moon, Sun, Bell, ChevronDown, LayoutDashboard, FileText, User, LogOut } from "lucide-react"
 import { useTheme } from "@/context/ThemeContext"
 import { useAuth } from "@/context/AuthContext"
 import { fetchNotifications, logout as apiLogout, markAllNotificationsRead, markNotificationRead } from "@/services/api"
@@ -8,6 +8,7 @@ import { Brand } from "@/components/brand/Brand"
 import { normalizeProfileSelection } from "@/lib/profile"
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { motion } from "framer-motion"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +28,15 @@ export function Header() {
   const [notifState, setNotifState] = useState({ unread: 0, items: [] })
   const [notifError, setNotifError] = useState("")
 
+  const initials = useMemo(() => {
+    const raw = String(user?.display_name || user?.username || "").trim()
+    if (!raw) return "U"
+    const parts = raw.split(/\s+/).filter(Boolean)
+    const a = (parts[0] || raw).slice(0, 1)
+    const b = (parts[1] || raw.slice(1, 2) || "").slice(0, 1)
+    return (a + b).toUpperCase()
+  }, [user?.display_name, user?.username])
+
   const navItems = useMemo(() => ([
     { icon: LayoutDashboard, label: "Dashboard", href: "/" },
     { icon: FileText, label: "Reports", href: "/reports" },
@@ -38,8 +48,24 @@ export function Header() {
     navigate("/login", { replace: true })
   }
 
+  const notifProfile = useMemo(() => {
+    const fromUser = String(user?.profile || "").trim()
+    const fromUserSub = String(user?.sub_profile || "").trim()
+    let storedProfile = ""
+    let storedSub = ""
+    try {
+      storedProfile = localStorage.getItem("marche_ai_profile") || ""
+      storedSub = localStorage.getItem("marche_ai_sub_profile") || ""
+    } catch (_) {}
+    const sel = normalizeProfileSelection({
+      profile: fromUser || storedProfile || "GLOBAL",
+      sub_profile: fromUserSub || storedSub || "",
+    })
+    return String(sel.profile || "GLOBAL").toUpperCase()
+  }, [user?.profile, user?.sub_profile])
+
   const loadNotifications = async () => {
-    const res = await fetchNotifications(5)
+    const res = await fetchNotifications(5, notifProfile)
     setNotifError("")
     setNotifState({ unread: res.unread_count ?? 0, items: res.notifications || [] })
   }
@@ -49,8 +75,18 @@ export function Header() {
     const t = setInterval(() => {
       loadNotifications().catch((e) => setNotifError(e?.message || "Failed to load notifications."))
     }, 60_000)
-    return () => clearInterval(t)
-  }, [])
+    const onStorage = (e) => {
+      if (!e) return
+      if (e.key === "marche_ai_profile" || e.key === "marche_ai_sub_profile") {
+        loadNotifications().catch(() => {})
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener("storage", onStorage)
+    }
+  }, [notifProfile, user?.username])
 
   const unreadBadge = useMemo(() => {
     const n = Number(notifState.unread || 0)
@@ -125,7 +161,7 @@ export function Header() {
                 onClick={async (e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  await markAllNotificationsRead().catch(() => {})
+                  await markAllNotificationsRead(notifProfile).catch(() => {})
                   await loadNotifications().catch(() => {})
                 }}
               >
@@ -155,7 +191,7 @@ export function Header() {
                     key={n.id}
                     className={`cursor-pointer whitespace-normal items-start gap-2 ${n.read ? "" : "bg-primary/5"}`}
                     onClick={async () => {
-                      if (!n.read) await markNotificationRead(n.id).catch(() => {})
+                      if (!n.read) await markNotificationRead(n.id, notifProfile).catch(() => {})
                       if (n.opportunity_id) navigate("/", { state: { openOpportunityId: n.opportunity_id } })
                       else navigate("/notifications")
                       await loadNotifications().catch(() => {})
@@ -229,24 +265,70 @@ export function Header() {
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="end" forceMount>
-            <DropdownMenuLabel className="leading-tight">
-              <div className="text-sm font-semibold">{user?.display_name || user?.username || "Admin"}</div>
-              <div className="text-xs text-muted-foreground">{user?.role || "session"}</div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer hover:bg-[#1a0b2e] hover:text-white focus:bg-[#1a0b2e] focus:text-white"
-              onClick={() => navigate("/profile")}
+          <DropdownMenuContent
+            align="end"
+            forceMount
+            className={cn(
+              "w-[220px] rounded-[14px] border border-slate-200 bg-white p-2 shadow-xl shadow-indigo-100/60",
+              "dark:border-white/10 dark:bg-[#1E1E2E]"
+            )}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
             >
-              Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="cursor-pointer text-destructive focus:bg-destructive focus:text-destructive-foreground"
-              onClick={onLogout}
-            >
-              Log out
-            </DropdownMenuItem>
+                  <div className="rounded-[10px] bg-gradient-to-r from-indigo-50 to-purple-50 p-3 dark:from-white/5 dark:to-white/5">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200/60">
+                        <span className="text-white font-bold text-sm">{initials}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">
+                          {user?.display_name || user?.username || "User"}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className="text-[11px] font-medium text-indigo-500 dark:text-indigo-300">
+                            {user?.role || "session"}
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-200 ring-1 ring-indigo-200/60 dark:ring-indigo-500/25">
+                            {String(user?.role || "Admin")}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="my-1.5 border-t border-slate-100 dark:border-white/10" />
+
+                  <DropdownMenuItem
+                    className={cn(
+                      "group cursor-pointer rounded-lg px-2.5 py-2 text-sm text-slate-700 transition-all",
+                      "hover:bg-indigo-50 hover:text-indigo-600 focus:bg-indigo-50 focus:text-indigo-600",
+                      "dark:text-slate-200 dark:hover:bg-white/5 dark:hover:text-indigo-200 dark:focus:bg-white/5 dark:focus:text-indigo-200"
+                    )}
+                    onClick={() => navigate("/profile")}
+                  >
+                    <User className="h-[15px] w-[15px] text-slate-500 transition-colors group-hover:text-indigo-600 dark:text-slate-300 dark:group-hover:text-indigo-200" />
+                    <span className="flex-1">Mon profil</span>
+                    <span className="transition-transform group-hover:translate-x-0.5" aria-hidden="true">›</span>
+                  </DropdownMenuItem>
+
+                  <div className="my-1.5 border-t border-slate-100 dark:border-white/10" />
+
+                  <DropdownMenuItem
+                    className={cn(
+                      "group cursor-pointer rounded-lg px-2.5 py-2 text-sm font-medium text-red-500 transition-all",
+                      "hover:bg-red-50 hover:text-red-600 focus:bg-red-50 focus:text-red-600",
+                      "dark:text-red-300 dark:hover:bg-red-500/10 dark:hover:text-red-200 dark:focus:bg-red-500/10 dark:focus:text-red-200"
+                    )}
+                    onClick={onLogout}
+                  >
+                    <LogOut className="h-[15px] w-[15px] text-red-400 transition-colors group-hover:text-red-600 dark:text-red-300 dark:group-hover:text-red-200" />
+                    <span className="flex-1">Se déconnecter</span>
+                    <span className="transition-transform group-hover:translate-x-0.5" aria-hidden="true">›</span>
+                  </DropdownMenuItem>
+            </motion.div>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

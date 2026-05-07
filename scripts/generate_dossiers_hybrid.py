@@ -25,7 +25,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -217,20 +217,48 @@ def _parse_deadline_to_date(value: str):
         return None
 
 
-def _should_skip_existing(output_dir: str, ref: str) -> bool:
+def _ref_clean(ref: str) -> str:
+    return re.sub(r"[^\w\-]", "_", (ref or ""))[:30]
+
+
+def _has_both_docx_dossiers(output_dir: str, ref: str) -> bool:
     """
-    Skip generation if both technical + administrative dossiers already exist for this ref.
+    True if both technical + administrative DOCX already exist for this ref.
+
+    Note: PDF may still be missing (conversion can fail). Those refs are tracked
+    separately so we can run PDF conversion without regenerating DOCX.
     Naming comes from `core/pipeline.py`:
       dossier_technique_{ref_clean}_YYYYMMDD.docx
       dossier_administratif_{ref_clean}_YYYYMMDD.docx
     """
-    ref_clean = re.sub(r"[^\w\-]", "_", ref)[:30]
+    ref_clean = _ref_clean(ref)
     dossier_dir = Path(output_dir) / ref_clean
-    if not dossier_dir.exists():
+    if not dossier_dir.is_dir():
         return False
-    has_tech = any(dossier_dir.glob(f"dossier_technique_{ref_clean}_*.docx"))
-    has_admin = any(dossier_dir.glob(f"dossier_administratif_{ref_clean}_*.docx"))
-    return bool(has_tech and has_admin)
+
+    def _has(pattern: str) -> bool:
+        for p in dossier_dir.glob(pattern):
+            if p.is_file() and not p.name.startswith("~$"):
+                return True
+        return False
+
+    return _has(f"dossier_technique_{ref_clean}_*.docx") and _has(f"dossier_administratif_{ref_clean}_*.docx")
+
+
+def _latest_pair_docx_paths(output_dir: str, ref: str) -> List[str]:
+    """Latest (by mtime) technical + administratif DOCX for a reference, if any."""
+    ref_clean = _ref_clean(ref)
+    dossier_dir = Path(output_dir) / ref_clean
+    if not dossier_dir.is_dir():
+        return []
+    out: List[str] = []
+    for pattern in (f"dossier_technique_{ref_clean}_*.docx", f"dossier_administratif_{ref_clean}_*.docx"):
+        matches = [p for p in dossier_dir.glob(pattern) if p.is_file() and not p.name.startswith("~$")]
+        if not matches:
+            continue
+        latest = max(matches, key=lambda p: p.stat().st_mtime)
+        out.append(str(latest))
+    return out
 
 
 def _detect_csv_kind(csv_path: str) -> str:
@@ -368,49 +396,77 @@ def _generate_docx(consultations: List[Consultation],
 
 
 # ── PDF Conversion ──────────────────────────────────────────────────────────
+def _libreoffice_convert_one(docx_path: str) -> Optional[str]:
+    """Convert a single DOCX to PDF using LibreOffice/soffice (cross-platform)."""
+    import shutil
+    import subprocess
+
+    exe = shutil.which("soffice") or shutil.which("libreoffice")
+    if not exe:
+        return None
+    p = Path(docx_path).resolve()
+    if not p.is_file():
+        return None
+    out_dir = str(p.parent)
+    try:
+        subprocess.run(
+            [exe, "--headless", "--convert-to", "pdf", "--outdir", out_dir, str(p)],
+            capture_output=True,
+            timeout=120,
+            check=True,
+        )
+    except Exception as e:
+        logger.debug("LibreOffice PDF failed for %s: %s", p.name, e)
+        return None
+    pdf = p.with_suffix(".pdf")
+    return str(pdf) if pdf.is_file() else None
+
+
 def _convert_to_pdf(docx_paths: List[str]) -> List[str]:
     """Convert DOCX files to PDF.
-    - Linux/Docker: uses LibreOffice headless (no MS Office needed)
-    - Windows: uses docx2pdf (MS Word COM)
+
+    - Windows: tries docx2pdf (Word COM) first, then LibreOffice if installed.
+    - Linux/Docker: LibreOffice headless.
     """
     import platform
-    import subprocess
-    pdf_paths = []
 
-    if platform.system() != "Windows":
-        # Linux / Docker → LibreOffice headless
-        for docx_path in docx_paths:
-            pdf_path = docx_path.replace(".docx", ".pdf")
-            out_dir = str(Path(docx_path).parent)
-            try:
-                subprocess.run(
-                    ["libreoffice", "--headless", "--convert-to", "pdf",
-                     "--outdir", out_dir, docx_path],
-                    capture_output=True, timeout=60, check=True,
-                )
-                if Path(pdf_path).exists():
-                    pdf_paths.append(pdf_path)
-                    logger.info(f"    📕 {Path(pdf_path).name}")
-                else:
-                    logger.warning(f"    ⚠️ PDF not found after conversion: {pdf_path}")
-            except Exception as e:
-                logger.warning(f"    ⚠️ LibreOffice PDF failed for {Path(docx_path).name}: {e}")
-    else:
-        # Windows → docx2pdf (COM Word)
+    is_win = platform.system() == "Windows"
+    docx2pdf_convert = None
+    if is_win:
         try:
-            from docx2pdf import convert as docx2pdf_convert
+            from docx2pdf import convert as docx2pdf_convert  # type: ignore
         except ImportError:
-            logger.warning("docx2pdf non installé — pip install docx2pdf")
-            return pdf_paths
+            docx2pdf_convert = None
+            logger.warning("docx2pdf non installé — pip install docx2pdf (sinon LibreOffice uniquement)")
 
-        for docx_path in docx_paths:
-            pdf_path = docx_path.replace(".docx", ".pdf")
+    pdf_paths: List[str] = []
+    for docx_path in docx_paths:
+        p = Path(docx_path)
+        if not p.is_file() or p.suffix.lower() != ".docx" or p.name.startswith("~$"):
+            continue
+        pdf_path = p.with_suffix(".pdf")
+        if pdf_path.is_file():
+            pdf_paths.append(str(pdf_path))
+            continue
+
+        converted = False
+        if is_win and docx2pdf_convert is not None:
             try:
-                docx2pdf_convert(docx_path, pdf_path)
-                pdf_paths.append(pdf_path)
-                logger.info(f"    📕 {Path(pdf_path).name}")
+                docx2pdf_convert(str(p), str(pdf_path))
+                if pdf_path.is_file():
+                    pdf_paths.append(str(pdf_path))
+                    logger.info(f"    📕 {pdf_path.name} (docx2pdf)")
+                    converted = True
             except Exception as e:
-                logger.warning(f"    ⚠️ PDF conversion failed for {Path(docx_path).name}: {e}")
+                logger.warning(f"    ⚠️ docx2pdf failed for {p.name}: {e}")
+
+        if not converted:
+            lo = _libreoffice_convert_one(str(p))
+            if lo:
+                pdf_paths.append(lo)
+                logger.info(f"    📕 {Path(lo).name} (LibreOffice)")
+            else:
+                logger.warning(f"    ⚠️ PDF conversion failed: {p.name}")
 
     return pdf_paths
 
@@ -485,6 +541,7 @@ def generate_dossiers_hybrid(
     today = date.today()
 
     selected = []
+    skipped_existing_refs: List[str] = []
     skipped_deadline = 0
     skipped_existing = 0
     for c in consultations:
@@ -504,7 +561,8 @@ def generate_dossiers_hybrid(
             if not (include_liked and ref in liked_set):
                 continue
 
-        if skip_existing and _should_skip_existing(output_dir, ref):
+        if skip_existing and _has_both_docx_dossiers(output_dir, ref):
+            skipped_existing_refs.append(ref)
             skipped_existing += 1
             continue
 
@@ -537,12 +595,31 @@ def generate_dossiers_hybrid(
     docx_paths = _generate_docx(consultations, output_dir)
     print(f"   {len(docx_paths)} fichiers DOCX générés")
 
-    # ── 6. Convert to PDF ───────────────────────────────────────────────
-    pdf_paths = []
-    if convert_pdf and docx_paths:
-        print(f"\n📕 Conversion PDF…")
-        pdf_paths = _convert_to_pdf(docx_paths)
-        print(f"   {len(pdf_paths)} fichiers PDF générés")
+    # ── 6. Convert to PDF (nouveaux DOCX + dossiers existants sans PDF) ───
+    pdf_paths: List[str] = []
+    docx_to_convert: List[str] = []
+    if convert_pdf:
+        docx_for_pdf: List[str] = []
+        seen_paths: Set[str] = set()
+        for p in docx_paths:
+            ap = str(Path(p).resolve())
+            if ap not in seen_paths:
+                seen_paths.add(ap)
+                docx_for_pdf.append(ap)
+        for ref in skipped_existing_refs:
+            for p in _latest_pair_docx_paths(output_dir, ref):
+                ap = str(Path(p).resolve())
+                if ap not in seen_paths:
+                    seen_paths.add(ap)
+                    docx_for_pdf.append(ap)
+        docx_to_convert = [
+            p for p in docx_for_pdf
+            if Path(p).suffix.lower() == ".docx" and not Path(p).with_suffix(".pdf").is_file()
+        ]
+        if docx_to_convert:
+            print(f"\n📕 Conversion PDF ({len(docx_to_convert)} DOCX sans PDF associé)…")
+            pdf_paths = _convert_to_pdf(docx_to_convert)
+            print(f"   {len(pdf_paths)} fichiers PDF générés")
 
     # ── 7. Summary ──────────────────────────────────────────────────────
     total_size_kb = sum(
@@ -559,6 +636,7 @@ def generate_dossiers_hybrid(
         "nlp_fallback": nlp_filled,
         "docx_generated": len(docx_paths),
         "pdf_generated": len(pdf_paths),
+        "pdf_docx_attempted": len(docx_to_convert),
         "total_files": len(docx_paths) + len(pdf_paths),
         "total_size_mb": round(total_size_kb / 1024, 2),
         "output_dir": output_dir,

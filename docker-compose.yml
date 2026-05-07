@@ -1,0 +1,106 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: marche-ai-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=marches_ai
+      - POSTGRES_USER=tenders
+      - POSTGRES_PASSWORD=change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - marche-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tenders -d marches_ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: marche-ai-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./dossiers_generes:/app/dossiers_generes
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - PYTHONUNBUFFERED=1
+      # Allow dashboard container + localhost browser
+      - CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173
+      # Force PostgreSQL-only DB
+      - DATABASE_URL=postgresql+psycopg://tenders:change_me@postgres:5432/marches_ai
+    networks:
+      - marche-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: marche-ai-dashboard
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - marche-net
+    restart: unless-stopped
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: marche-ai-n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/home/node/workflows
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=alexsys
+      - N8N_BASIC_AUTH_PASSWORD=alexsys2026
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=Africa/Casablanca
+      - TZ=Africa/Casablanca
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - marche-net
+    restart: unless-stopped
+
+networks:
+  marche-net:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  postgres_data:
+

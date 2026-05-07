@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bell, CheckCheck } from "lucide-react";
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from "@/services/api";
+import { useAuth } from "@/context/AuthContext";
+import { normalizeProfileSelection } from "@/lib/profile";
 
 const GlassCard = ({ children, className = "" }) => (
   <Card className={`bg-white/5 backdrop-blur border-white/10 hover:shadow-md hover:shadow-black/20 transition-all ${className}`}>
@@ -22,13 +24,30 @@ const formatDate = (iso) => {
 
 export function Notifications() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const notifProfile = useMemo(() => {
+    const fromUser = String(user?.profile || "").trim()
+    const fromUserSub = String(user?.sub_profile || "").trim()
+    let storedProfile = ""
+    let storedSub = ""
+    try {
+      storedProfile = localStorage.getItem("marche_ai_profile") || ""
+      storedSub = localStorage.getItem("marche_ai_sub_profile") || ""
+    } catch (_) {}
+    const sel = normalizeProfileSelection({
+      profile: fromUser || storedProfile || "GLOBAL",
+      sub_profile: fromUserSub || storedSub || "",
+    })
+    return String(sel.profile || "GLOBAL").toUpperCase()
+  }, [user?.profile, user?.sub_profile])
+
   const load = async () => {
-    const res = await fetchNotifications(200);
+    const res = await fetchNotifications(200, notifProfile);
     setItems(res.notifications || []);
     setUnread(res.unread_count ?? 0);
   };
@@ -49,16 +68,25 @@ export function Notifications() {
       load().catch(() => {});
     }, 60_000);
 
+    const onStorage = (e) => {
+      if (!e) return;
+      if (e.key === "marche_ai_profile" || e.key === "marche_ai_sub_profile") {
+        load().catch(() => {});
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
     return () => {
       mounted = false;
       clearInterval(t);
+      window.removeEventListener("storage", onStorage);
     };
-  }, []);
+  }, [notifProfile, user?.username]);
 
   const onOpen = async (n) => {
     if (!n) return;
     if (!n.read) {
-      await markNotificationRead(n.id).catch(() => {});
+      await markNotificationRead(n.id, notifProfile).catch(() => {});
     }
     if (n.opportunity_id) {
       navigate("/", { state: { openOpportunityId: n.opportunity_id } });
@@ -82,7 +110,7 @@ export function Notifications() {
             <Button
               variant="outline"
               onClick={async () => {
-                await markAllNotificationsRead().catch(() => {});
+                await markAllNotificationsRead(notifProfile).catch(() => {});
                 await load().catch(() => {});
               }}
               disabled={!items.length}

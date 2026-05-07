@@ -110,6 +110,27 @@ ENV/
 env.bak/
 venv.bak/
 
+# Runtime / local data (do not commit)
+data/users.json
+data/likes.json
+data/auth_audit.json
+data/activity.jsonl
+data/preferences.json
+data/rag_cache_hybrid.json
+data/chroma_db/
+data/*.db
+data/*.sqlite3
+data/pipeline_report*.json
+data/pipeline_results_*.csv
+data/pipeline_results_*.xlsx
+data/*latest*.csv
+data/*latest*.xlsx
+data/*.xlsx
+
+# Generated dossiers (DOCX/PDF) and logs
+dossiers_generes/
+logs/
+
 # Spyder project settings
 .spyderproject
 .spyproject

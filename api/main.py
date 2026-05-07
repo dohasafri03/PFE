@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 # Optional SQLite persistence (SQLAlchemy). The app works without it, but the DB stays empty.
 try:
     from sqlalchemy.orm import Session
+    from sqlalchemy import or_
 
     from app.database import get_db
     from app.init_db import ensure_db_schema
@@ -94,7 +95,7 @@ app = FastAPI(
 # Include common Vite dev/preview ports by default; override via CORS_ORIGINS if needed.
 cors_origins_env = os.environ.get(
     "CORS_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080,http://127.0.0.1:8080",
 )
 cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
 if cors_origins_env.strip() == "*":
@@ -625,12 +626,124 @@ def _list_known_users() -> list[str]:
     return sorted(users)
 
 
+def _normalize_profile_label(p: Optional[str]) -> str:
+    s = (p or "").strip().upper()
+    if s == "CYBER":
+        s = "CYBERSECURITY"
+    if not s or s in {"ALL"}:
+        return "GLOBAL"
+    if s not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+        return "GLOBAL"
+    return s
+
+
+def _user_has_admin_visibility(username: str) -> bool:
+    """
+    Admin accounts should see ALL notifications across profiles.
+
+    Convention in this project:
+    - `users.json` uses role == "Admin" for the administrator account(s).
+    - Back-compat: treat default `admin` username as admin even if role is missing.
+    """
+    u = (username or "").strip()
+    if not u:
+        return False
+    if u.lower() == "admin":
+        return True
+    try:
+        users = _load_users()
+        entry = users.get(u) if isinstance(users, dict) else None
+        if isinstance(entry, dict):
+            role = str(entry.get("role") or "").strip().upper()
+            if role in {"ADMIN", "ADMINISTRATOR", "SUPERADMIN", "ROOT"}:
+                return True
+            if str(entry.get("role") or "").strip() == "Admin":
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _domains_from_opportunity_dict(o: dict) -> list[str]:
+    if not isinstance(o, dict):
+        return []
+    doms = o.get("domains") or o.get("domain") or []
+    if isinstance(doms, str):
+        doms = [d.strip().upper() for d in doms.split("/") if d.strip()]
+    if isinstance(doms, list):
+        return [str(d).strip().upper() for d in doms if str(d).strip()]
+    # Fallback: parse qualification string if present (CSV/DB exports).
+    qual = o.get("qualification") or o.get("Qualification") or ""
+    try:
+        return _parse_pipeline_domains(str(qual))
+    except Exception:
+        return []
+
+
+def _notification_bucket_for_opportunity(o: dict) -> str:
+    """
+    Pick a single profile bucket for a notification tied to an opportunity.
+
+    We prefer the strongest domain label already attached to the opportunity.
+    """
+    doms = _domains_from_opportunity_dict(o)
+    if not doms:
+        return "GLOBAL"
+    order = {"AI": 0, "DATA": 1, "CLOUD": 2, "DEV": 3, "CYBERSECURITY": 4}
+    doms_sorted = sorted(set(doms), key=lambda d: order.get(d, 99))
+    return doms_sorted[0]
+
+
+def _opportunity_matches_user_profile(o: dict, user_profile: str) -> bool:
+    """
+    Lightweight match aligned with dossiers filtering intent:
+    - GLOBAL/ALL: everything
+    - Otherwise: match domain tag OR substring match in service string (CYBER alias included)
+    """
+    p = _normalize_profile_label(user_profile)
+    if p in {"GLOBAL", "ALL"}:
+        return True
+
+    if not isinstance(o, dict):
+        return False
+
+    doms = _domains_from_opportunity_dict(o)
+    if p in doms:
+        return True
+
+    svc = str(o.get("service") or "").upper()
+    if p == "CYBERSECURITY" and "CYBER" in svc:
+        return True
+    if p and p in svc:
+        return True
+    return False
+
+
+def _notification_matches_view(*, view_profile: str, notif_profile: Optional[str]) -> bool:
+    """
+    Filter notifications for the UI "profile view".
+
+    Rules:
+    - GLOBAL/ALL view: show everything (including legacy NULL profile rows).
+    - Specific view: strict match on `profile` (DEV sees only DEV-tagged rows, etc.).
+    """
+    vp = _normalize_profile_label(view_profile)
+    np = _normalize_profile_label(notif_profile) if (notif_profile is not None and str(notif_profile).strip() != "") else "GLOBAL"
+
+    if vp in {"GLOBAL", "ALL"}:
+        return True
+
+    # Specific profile: strict match only (DEV sees DEV-tagged rows, etc.)
+    return np == vp
+
+
 def _create_notification(
     db: "Session",
     user_id: str,
     message: str,
     ntype: str,
     opportunity_id: Optional[str] = None,
+    profile: Optional[str] = None,
 ) -> None:
     if not _DB_AVAILABLE:
         return
@@ -639,6 +752,7 @@ def _create_notification(
         return
     obj = Notification(
         user_id=user_id,
+        profile=_normalize_profile_label(profile),
         message=message,
         type=ntype,
         opportunity_id=opportunity_id,
@@ -834,12 +948,21 @@ async def _ensure_deadline_notifications(db: "Session", user_id: str, days: int 
     except Exception:
         return
 
+    user_profile = str(_get_user_profile(str(user_id)).get("profile") or "GLOBAL").strip().upper()
+    if user_profile == "CYBER":
+        user_profile = "CYBERSECURITY"
+    if user_profile not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+        user_profile = "GLOBAL"
+    admin_vis = _user_has_admin_visibility(str(user_id))
+
     now = datetime.utcnow()
     window_end = now + timedelta(days=days)
     cutoff = now - timedelta(hours=24)
 
     for o in opps:
         if not isinstance(o, dict):
+            continue
+        if (not admin_vis) and (not _opportunity_matches_user_profile(o, user_profile)):
             continue
         oid = str(o.get("id") or o.get("reference") or "").strip()
         if not oid:
@@ -864,11 +987,13 @@ async def _ensure_deadline_notifications(db: "Session", user_id: str, days: int 
         if not dd or not (now <= dd <= window_end):
             continue
 
+        notif_profile = _notification_bucket_for_opportunity(o)
         exists = (
             db.query(Notification)
             .filter(Notification.user_id == user_id)
             .filter(Notification.type == "deadline_approaching")
             .filter(Notification.opportunity_id == oid)
+            .filter(Notification.profile == notif_profile)
             .filter(Notification.created_at >= cutoff)
             .count()
         )
@@ -883,6 +1008,7 @@ async def _ensure_deadline_notifications(db: "Session", user_id: str, days: int 
             message=f"Deadline approaching (<5 days): {title} ({days_left}d)",
             ntype="deadline_approaching",
             opportunity_id=oid,
+            profile=notif_profile,
         )
 
     try:
@@ -898,6 +1024,10 @@ async def _ensure_deadline_notifications(db: "Session", user_id: str, days: int 
 async def get_notifications(
     request: Request,
     limit: int = 50,
+    profile: Optional[str] = Query(
+        None,
+        description="Profile view filter (GLOBAL/AI/DATA/CLOUD/DEV/CYBERSECURITY). Defaults to the authenticated user's profile.",
+    ),
     db=Depends(get_db) if _DB_AVAILABLE else None,
 ):
     user = require_auth(request)
@@ -906,17 +1036,32 @@ async def get_notifications(
 
     await _ensure_deadline_notifications(db, user_id=user, days=5)
 
-    unread_count = (
-        db.query(Notification)
-        .filter(Notification.user_id == user)
-        .filter(Notification.read == False)  # noqa: E712
-        .count()
-    )
+    view_profile = (profile or (_get_user_profile(str(user)).get("profile") or "GLOBAL")).strip().upper()
+    if view_profile == "CYBER":
+        view_profile = "CYBERSECURITY"
+    if view_profile not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY", "ALL"}:
+        view_profile = "GLOBAL"
+
+    base_q = db.query(Notification).filter(Notification.user_id == user)
+    vp = _normalize_profile_label(view_profile)
+    if _user_has_admin_visibility(str(user)):
+        filtered_q = base_q
+    elif vp in {"GLOBAL", "ALL"}:
+        filtered_q = base_q
+    else:
+        filtered_q = base_q.filter(
+            or_(
+                Notification.profile == vp,
+                # Back-compat: older rows may not have `profile` populated; treat as GLOBAL bucket.
+                Notification.profile.is_(None),
+                Notification.profile == "",
+            )
+        )
+
+    unread_count = int(filtered_q.filter(Notification.read == False).count())  # noqa: E712
 
     items = (
-        db.query(Notification)
-        .filter(Notification.user_id == user)
-        .order_by(Notification.created_at.desc())
+        filtered_q.order_by(Notification.created_at.desc())
         .limit(max(1, min(int(limit), 200)))
         .all()
     )
@@ -925,6 +1070,7 @@ async def get_notifications(
         return {
             "id": n.id,
             "user_id": n.user_id,
+            "profile": getattr(n, "profile", None) or "GLOBAL",
             "message": n.message,
             "type": n.type,
             "opportunity_id": n.opportunity_id,
@@ -932,13 +1078,20 @@ async def get_notifications(
             "created_at": n.created_at.isoformat() if n.created_at else None,
         }
 
-    return {"unread_count": unread_count, "count": len(items), "notifications": [_ser(n) for n in items]}
+    return {
+        "unread_count": unread_count,
+        "count": len(items),
+        "profile": vp,
+        "admin_all_profiles": bool(_user_has_admin_visibility(str(user))),
+        "notifications": [_ser(n) for n in items],
+    }
 
 
 @app.post("/notifications/read/{nid}")
 async def read_notification(
     nid: int,
     request: Request,
+    profile: Optional[str] = Query(None, description="Profile view filter (optional; avoids mismatched UI states)"),
     db=Depends(get_db) if _DB_AVAILABLE else None,
 ):
     user = require_auth(request)
@@ -948,6 +1101,15 @@ async def read_notification(
     obj = db.query(Notification).filter(Notification.id == int(nid)).one_or_none()
     if not obj or obj.user_id != user:
         raise HTTPException(404, "Not found")
+
+    if (not _user_has_admin_visibility(str(user))) and profile is not None and str(profile).strip():
+        view_profile = str(profile).strip().upper()
+        if view_profile == "CYBER":
+            view_profile = "CYBERSECURITY"
+        np = getattr(obj, "profile", None)
+        if not _notification_matches_view(view_profile=view_profile, notif_profile=np):
+            raise HTTPException(404, "Not found")
+
     obj.read = True
     db.commit()
     return {"ok": True}
@@ -956,15 +1118,34 @@ async def read_notification(
 @app.post("/notifications/read_all")
 async def read_all_notifications(
     request: Request,
+    profile: Optional[str] = Query(
+        None,
+        description="Profile view filter (GLOBAL/AI/DATA/CLOUD/DEV/CYBERSECURITY). Defaults to the authenticated user's profile.",
+    ),
     db=Depends(get_db) if _DB_AVAILABLE else None,
 ):
     user = require_auth(request)
     if not _DB_AVAILABLE or db is None:
         raise HTTPException(501, "DB not available")
 
-    db.query(Notification).filter(Notification.user_id == user).filter(Notification.read == False).update(  # noqa: E712
-        {"read": True}
-    )
+    view_profile = (profile or (_get_user_profile(str(user)).get("profile") or "GLOBAL")).strip().upper()
+    if view_profile == "CYBER":
+        view_profile = "CYBERSECURITY"
+    if view_profile not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY", "ALL"}:
+        view_profile = "GLOBAL"
+
+    q = db.query(Notification).filter(Notification.user_id == user).filter(Notification.read == False)  # noqa: E712
+    vp = _normalize_profile_label(view_profile)
+    if (not _user_has_admin_visibility(str(user))) and vp not in {"GLOBAL", "ALL"}:
+        q = q.filter(
+            or_(
+                Notification.profile == vp,
+                Notification.profile.is_(None),
+                Notification.profile == "",
+            )
+        )
+
+    q.update({"read": True})
     db.commit()
     return {"ok": True}
 
@@ -988,6 +1169,9 @@ class PipelineRequest(BaseModel):
 
 class ScoreRequest(BaseModel):
     csv_path: Optional[str] = None
+    # When true (default), `/pipeline/score` only returns items with a valid, non-expired deadline.
+    # n8n email reports should typically set this to false and apply their own deadline rules in JS.
+    require_valid_deadline: bool = True
 
 class RAGRequest(BaseModel):
     csv_path: Optional[str] = None
@@ -1810,6 +1994,188 @@ def _load_dossier_deadline_from_analysis(dossier_dir: Path) -> Optional[str]:
         return None
 
 
+def _opportunity_dict_from_pipeline_row(row: dict, raw_scrape_index: dict) -> Optional[dict]:
+    """Build one Dashboard-shaped opportunity dict from a pipeline_results CSV row (no liked/rag_status)."""
+    oid = (row.get("ID") or "").strip()
+    if not oid:
+        return None
+    qual = (row.get("Qualification") or "").strip()
+    score = _parse_pipeline_score(qual)
+    priority = (row.get("Priorite") or "").strip()
+    title = (row.get("Titre") or "").strip()
+    domaines_activite = (row.get("Domaines_Activite") or "").strip()
+    desc_t = (row.get("Description_Technique") or "").strip()
+    desc_f = (row.get("Description_Fonctionnelle") or "").strip()
+    reqs = (row.get("Requirements") or "").strip()
+
+    domains_col = (row.get("Domains") or row.get("Domain") or "").strip()
+    pipeline_domains = _parse_pipeline_domains(qual)
+    if domains_col:
+        pipeline_domains = _merge_domains(
+            pipeline_domains,
+            [p.strip() for p in domains_col.split("/") if p.strip()],
+        )
+
+    text_for_domains = " ".join([title, domaines_activite, qual, desc_t, desc_f, reqs])
+    inferred_domains = _classify_domains_v2(text_for_domains)
+    domains = _postprocess_domains_v2(_merge_domains(pipeline_domains, inferred_domains), text_for_domains)
+
+    service = (row.get("Service") or "").strip() or _detect_service(
+        domains, title=title, domaines_activite=domaines_activite, qualification=qual
+    )
+    similarity_score = _compute_similarity_score(priority=priority, score=score)
+
+    buyer = (row.get("Client") or "").strip()
+    buyer_norm = _normalize_buyer_label(buyer)
+    if buyer_norm.lower() in {"", "non identifie", "non identifié", "-", "n/a"}:
+        raw = raw_scrape_index.get(oid) or {}
+        cand = _normalize_buyer_label(str(raw.get("acheteur") or "").strip())
+        if not cand:
+            cand = _normalize_buyer_label(_infer_buyer_from_objet(str(raw.get("objet") or "")))
+        if not cand:
+            cand = _normalize_buyer_label(_infer_buyer_from_title(title))
+        buyer_norm = cand or buyer_norm
+
+    objet = str((raw_scrape_index.get(oid) or {}).get("objet") or "").strip()
+
+    return {
+        "id": oid,
+        "reference": oid,
+        "priority": priority,
+        "qualification": qual,
+        "similarity_score": similarity_score,
+        "domains": domains,
+        "domain": domains,
+        "sector": domains[0] if domains else "",
+        "service": service,
+        "title": title,
+        "buyer": buyer_norm,
+        "organization": buyer_norm,
+        "objet": objet,
+        "deadline": _parse_pipeline_deadline(row.get("Deadline")),
+        "budget": _parse_pipeline_budget(row.get("Budget_Estime")),
+        "score": score,
+        "description_technique": desc_t,
+        "description_fonctionnelle": desc_f,
+        "requirements": _parse_pipeline_requirements(reqs),
+        "url": (row.get("URL_Offre") or "").strip(),
+        "cps_source": (row.get("CPS_Source") or "").strip(),
+        "domaines_activite": domaines_activite,
+    }
+
+
+def _active_dossier_opportunity_ids() -> set[str]:
+    """
+    Opportunity IDs that have at least one generated dossier file on disk and a non-expired deadline
+    (from pipeline CSV or analyse_*.json in the dossier folder). Matches Reports / dossiers index scope.
+    """
+    root = PROJECT_ROOT / "dossiers_generes"
+    if not root.is_dir():
+        return set()
+    rows = _load_latest_pipeline_results_rows()
+    if not rows:
+        return set()
+
+    deadlines_by_folder: dict[str, Optional[str]] = {}
+    folder_to_id: dict[str, str] = {}
+    for row in rows:
+        oid = (row.get("ID") or "").strip()
+        if not oid:
+            continue
+        fn = _consultation_folder_name(oid)
+        folder_to_id[fn] = oid
+        dl = _parse_pipeline_deadline(row.get("Deadline"))
+        if dl:
+            deadlines_by_folder[fn] = dl
+
+    today = datetime.now().date()
+    out: set[str] = set()
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        dl = deadlines_by_folder.get(folder.name) or _load_dossier_deadline_from_analysis(folder)
+        if not dl:
+            continue
+        try:
+            dl_date = datetime.fromisoformat(str(dl)).date()
+        except ValueError:
+            continue
+        if dl_date < today:
+            continue
+        kids = [p for p in folder.iterdir() if p.is_file()]
+        if not _pick_latest_dossiers(kids):
+            continue
+        oid = folder_to_id.get(folder.name)
+        if oid:
+            out.add(oid)
+    return out
+
+
+def _merge_opportunities_with_active_dossier_folders(
+    out_items: list[dict],
+    include_excluded: bool,
+    include_expired: bool,
+    likes: dict,
+) -> list[dict]:
+    """Append pipeline rows for opportunities that exist on disk in dossiers_generes but are missing from out_items."""
+    try:
+        rows = _load_latest_pipeline_results_rows()
+    except Exception:
+        return out_items
+    if not rows:
+        return out_items
+
+    have = {
+        str(o.get("id") or o.get("reference") or "").strip()
+        for o in out_items
+        if (o.get("id") or o.get("reference"))
+    }
+    try:
+        want = _active_dossier_opportunity_ids()
+    except Exception:
+        return out_items
+
+    missing = sorted(want - have)
+    if not missing:
+        return out_items
+
+    raw_scrape_index = _load_latest_raw_scrape_index()
+    rows_by_id = {(r.get("ID") or "").strip(): r for r in rows if (r.get("ID") or "").strip()}
+    today = date.today()
+    merged = list(out_items)
+
+    for oid in missing:
+        row = rows_by_id.get(oid)
+        if not row:
+            continue
+        priority = (row.get("Priorite") or "").strip()
+        if (not include_excluded) and priority.upper() == "EXCLUDED":
+            continue
+        o = _opportunity_dict_from_pipeline_row(row, raw_scrape_index)
+        if not o:
+            continue
+        if not include_expired:
+            if not o.get("deadline"):
+                continue
+            if _deadline_is_expired(o.get("deadline"), today=today):
+                continue
+        oid2 = str(o.get("id") or "").strip()
+        liked = _is_liked(oid2, likes)
+        merged.append({
+            **o,
+            "liked": liked,
+            "rag_status": _compute_rag_status(
+                priority=str(o.get("priority") or ""),
+                score=int(o.get("score") or 0),
+                similarity_score=float(o.get("similarity_score") or 0.0),
+                deadline_iso=o.get("deadline"),
+                liked=bool(liked),
+                existing=o.get("rag_status"),
+            ),
+        })
+    return merged
+
+
 def _sync_db_from_pipeline_results(db: "Session") -> dict:
     """
     Upsert opportunities into SQLite from the latest `pipeline_results_*.csv` export.
@@ -1825,7 +2191,7 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
 
     inserted = 0
     updated = 0
-    new_hot_refs: list[tuple[str, str]] = []  # (ref, title)
+    new_hot_refs: list[tuple[str, str, list[str]]] = []  # (ref, title, domains)
 
     # SessionLocal has autoflush=False; without a local cache, duplicate refs in the same CSV
     # can create multiple pending rows and fail the UNIQUE(ref) constraint at commit time.
@@ -1869,7 +2235,7 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
                 db.add(obj)
                 inserted += 1
                 if (level or "").strip().upper() == "HOT":
-                    new_hot_refs.append((ref, title))
+                    new_hot_refs.append((ref, title, domains))
             else:
                 updated += 1
             by_ref[ref] = obj
@@ -1899,14 +2265,39 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
     try:
         if new_hot_refs:
             users = _list_known_users()
-            for ref, title in new_hot_refs:
+            now = datetime.utcnow()
+            cutoff = now - timedelta(hours=24)
+            for ref, title, domains in new_hot_refs:
+                o_stub = {"domains": domains, "service": "", "title": title, "qualification": ""}
+                notif_profile = _notification_bucket_for_opportunity(o_stub)
                 for u in users:
+                    up = str(_get_user_profile(str(u)).get("profile") or "GLOBAL").strip().upper()
+                    if up == "CYBER":
+                        up = "CYBERSECURITY"
+                    if up not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+                        up = "GLOBAL"
+                    if not _opportunity_matches_user_profile(o_stub, up):
+                        continue
+
+                    exists = (
+                        db.query(Notification)
+                        .filter(Notification.user_id == u)
+                        .filter(Notification.type == "new_hot_opportunity")
+                        .filter(Notification.opportunity_id == ref)
+                        .filter(Notification.profile == notif_profile)
+                        .filter(Notification.created_at >= cutoff)
+                        .count()
+                    )
+                    if exists:
+                        continue
+
                     _create_notification(
                         db,
                         user_id=u,
                         message=f"New HOT opportunity detected: {title or ref}",
                         ntype="new_hot_opportunity",
                         opportunity_id=ref,
+                        profile=notif_profile,
                     )
             db.commit()
     except Exception:
@@ -2388,9 +2779,10 @@ async def pipeline_score(
             deadline_iso = _parse_pipeline_deadline(extra.get("Deadline"))
             budget = _parse_pipeline_budget(extra.get("Budget_Estime"))
 
-            # Only keep opportunities with a valid, non-expired deadline.
-            if (not deadline_iso) or _deadline_is_expired(deadline_iso, today=today):
-                continue
+            if bool(getattr(req, "require_valid_deadline", True)):
+                # Only keep opportunities with a valid, non-expired deadline.
+                if (not deadline_iso) or _deadline_is_expired(deadline_iso, today=today):
+                    continue
 
             if (not description_technique) and (not description_fonctionnelle) and (not requirements):
                 try:
@@ -2636,12 +3028,19 @@ async def pipeline_generate_dossiers(req: GenerateRequest, request: Request):
             try:
                 target_users = [user] if user else _list_known_users()
                 for u in target_users:
+                    prof = "GLOBAL"
+                    prof = str((_get_user_profile(str(u)).get("profile") or "GLOBAL")).strip().upper()
+                    if prof == "CYBER":
+                        prof = "CYBERSECURITY"
+                    if prof not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+                        prof = "GLOBAL"
                     _create_notification(
                         session,
                         user_id=u,
                         message="Dossier generation completed.",
                         ntype="dossier_generation_completed",
                         opportunity_id=None,
+                        profile=prof,
                     )
                 session.commit()
             finally:
@@ -2857,9 +3256,10 @@ async def results_opportunities(
     db=Depends(get_db) if _DB_AVAILABLE else None,
 ):
     """
-    Retourne les opportunités depuis le dernier export `pipeline_results_*.csv`.
+    Retourne les opportunités depuis la base (si dispo) ou le dernier export `pipeline_results_*.csv`.
 
-    Objectif: fournir au Dashboard exactement les mêmes champs que le CSV généré par le workflow n8n/pipeline.
+    Les opportunités présentes dans `dossiers_generes/` avec deadline non expirée mais absentes de la base
+    sont ajoutées à partir du CSV pipeline, pour aligner le Dashboard avec la page Reports.
     """
     if _DB_AVAILABLE and db is not None:
         try:
@@ -2938,7 +3338,13 @@ async def results_opportunities(
                     "liked": oid in liked_ids,
                     "rag_status": getattr(o, "rag_status", "nouveau")
                 })
-            
+
+            with _likes_lock:
+                likes_merge = _load_likes()
+            out_items = _merge_opportunities_with_active_dossier_folders(
+                out_items, include_excluded, include_expired, likes_merge
+            )
+
             return {
                 "source": "PostgreSQL Database",
                 "count": len(out_items),
@@ -2973,75 +3379,12 @@ async def results_opportunities(
         raw_scrape_index = _load_latest_raw_scrape_index()
         computed: list[dict] = []
         for row in rows:
-            qual = (row.get("Qualification") or "").strip()
-            score = _parse_pipeline_score(qual)
             priority = (row.get("Priorite") or "").strip()
-
             if (not include_excluded) and priority.upper() == "EXCLUDED":
                 continue
-
-            oid = (row.get("ID") or "").strip()
-            title = (row.get("Titre") or "").strip()
-            domaines_activite = (row.get("Domaines_Activite") or "").strip()
-            desc_t = (row.get("Description_Technique") or "").strip()
-            desc_f = (row.get("Description_Fonctionnelle") or "").strip()
-            reqs = (row.get("Requirements") or "").strip()
-
-            # Prefer explicit Domains column if present, else parse from Qualification + inference.
-            domains_col = (row.get("Domains") or row.get("Domain") or "").strip()
-            pipeline_domains = _parse_pipeline_domains(qual)
-            if domains_col:
-                pipeline_domains = _merge_domains(
-                    pipeline_domains,
-                    [p.strip() for p in domains_col.split("/") if p.strip()],
-                )
-
-            text_for_domains = " ".join([title, domaines_activite, qual, desc_t, desc_f, reqs])
-            inferred_domains = _classify_domains_v2(text_for_domains)
-            domains = _postprocess_domains_v2(_merge_domains(pipeline_domains, inferred_domains), text_for_domains)
-
-            service = (row.get("Service") or "").strip() or _detect_service(
-                domains, title=title, domaines_activite=domaines_activite, qualification=qual
-            )
-            similarity_score = _compute_similarity_score(priority=priority, score=score)
-
-            buyer = (row.get("Client") or "").strip()
-            buyer_norm = _normalize_buyer_label(buyer)
-            if buyer_norm.lower() in {"", "non identifie", "non identifié", "-", "n/a"}:
-                raw = raw_scrape_index.get(oid) or {}
-                cand = _normalize_buyer_label(str(raw.get("acheteur") or "").strip())
-                if not cand:
-                    cand = _normalize_buyer_label(_infer_buyer_from_objet(str(raw.get("objet") or "")))
-                if not cand:
-                    cand = _normalize_buyer_label(_infer_buyer_from_title(title))
-                buyer_norm = cand or buyer_norm
-
-            objet = str((raw_scrape_index.get(oid) or {}).get("objet") or "").strip()
-
-            computed.append({
-                "id": oid,
-                "reference": oid,
-                "priority": priority,
-                "qualification": qual,
-                "similarity_score": similarity_score,
-                "domains": domains,
-                "domain": domains,  # alias for clients expecting "domain"
-                "sector": domains[0] if domains else "",
-                "service": service,
-                "title": title,
-                "buyer": buyer_norm,
-                "organization": buyer_norm,
-                "objet": objet,
-                "deadline": _parse_pipeline_deadline(row.get("Deadline")),
-                "budget": _parse_pipeline_budget(row.get("Budget_Estime")),
-                "score": score,
-                "description_technique": desc_t,
-                "description_fonctionnelle": desc_f,
-                "requirements": _parse_pipeline_requirements(reqs),
-                "url": (row.get("URL_Offre") or "").strip(),
-                "cps_source": (row.get("CPS_Source") or "").strip(),
-                "domaines_activite": domaines_activite,
-            })
+            rec = _opportunity_dict_from_pipeline_row(row, raw_scrape_index)
+            if rec:
+                computed.append(rec)
 
         base_items = computed
         with _cache_lock:
@@ -3070,6 +3413,10 @@ async def results_opportunities(
                 existing=o.get("rag_status"),
             ),
         })
+
+    out_items = _merge_opportunities_with_active_dossier_folders(
+        out_items, include_excluded, include_expired, likes
+    )
 
     return {
         "source": latest_path or str(_find_latest("pipeline_results_*.csv")),

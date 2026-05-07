@@ -20,11 +20,21 @@ def ensure_db_schema():
             existing = {c[1] for c in cols}
             liked_type = "INTEGER DEFAULT 0"
             status_type = "TEXT DEFAULT 'nouveau'"
+
+            ncols = conn.execute(text("PRAGMA table_info(notifications)")).fetchall()
+            nexisting = {c[1] for c in ncols}
+            notif_profile_type = "TEXT DEFAULT 'GLOBAL'"
         else:
             cols = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'opportunities'")).fetchall()
             existing = {c[0] for c in cols}
             liked_type = "BOOLEAN DEFAULT FALSE"
             status_type = "VARCHAR DEFAULT 'nouveau'"
+
+            ncols = conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'notifications'")
+            ).fetchall()
+            nexisting = {c[0] for c in ncols}
+            notif_profile_type = "VARCHAR DEFAULT 'GLOBAL'"
 
         to_add = {
             "description_technique": "TEXT",
@@ -43,9 +53,11 @@ def ensure_db_schema():
                 continue
             conn.execute(text(f"ALTER TABLE opportunities ADD COLUMN {name} {typ}"))
 
-        # No ALTER here for notifications; create_all is enough for fresh installs.
+        # Notifications: add profile bucket for per-profile UI filtering.
+        if "profile" not in nexisting:
+            conn.execute(text(f"ALTER TABLE notifications ADD COLUMN profile {notif_profile_type}"))
 
 
 if __name__ == "__main__":
     ensure_db_schema()
-    print("SQLite DB initialized and schema ensured.")
+    print("DB initialized and schema ensured.")

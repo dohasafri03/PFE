@@ -352,8 +352,9 @@ export const fetchProfileSecurity = async () => {
   return res.json();
 };
 
-export const fetchNotifications = async (limit = 50) => {
-  const res = await fetchWithCreds(`${API_BASE_URL}/notifications?limit=${encodeURIComponent(limit)}`);
+export const fetchNotifications = async (limit = 50, profile) => {
+  const p = profile ? `&profile=${encodeURIComponent(profile)}` : "";
+  const res = await fetchWithCreds(`${API_BASE_URL}/notifications?limit=${encodeURIComponent(limit)}${p}`);
   if (!res.ok) {
     const detail = await readErrorDetail(res);
     throw new Error(detail);
@@ -361,8 +362,9 @@ export const fetchNotifications = async (limit = 50) => {
   return res.json();
 };
 
-export const markNotificationRead = async (id) => {
-  const res = await fetchWithCreds(`${API_BASE_URL}/notifications/read/${encodeURIComponent(id)}`, { method: "POST" });
+export const markNotificationRead = async (id, profile) => {
+  const p = profile ? `?profile=${encodeURIComponent(profile)}` : "";
+  const res = await fetchWithCreds(`${API_BASE_URL}/notifications/read/${encodeURIComponent(id)}${p}`, { method: "POST" });
   if (!res.ok) {
     const detail = await readErrorDetail(res);
     throw new Error(detail);
@@ -370,8 +372,9 @@ export const markNotificationRead = async (id) => {
   return res.json();
 };
 
-export const markAllNotificationsRead = async () => {
-  const res = await fetchWithCreds(`${API_BASE_URL}/notifications/read_all`, { method: "POST" });
+export const markAllNotificationsRead = async (profile) => {
+  const p = profile ? `?profile=${encodeURIComponent(profile)}` : "";
+  const res = await fetchWithCreds(`${API_BASE_URL}/notifications/read_all${p}`, { method: "POST" });
   if (!res.ok) {
     const detail = await readErrorDetail(res);
     throw new Error(detail);

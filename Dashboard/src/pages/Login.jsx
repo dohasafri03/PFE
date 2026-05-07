@@ -54,10 +54,18 @@ export function Login() {
     } catch (err) {
       // Surface real errors (API unreachable / 401 / CORS) instead of always "invalid".
       const msg = (err && typeof err === "object" && "message" in err) ? String(err.message || "") : "";
-      if (msg) {
+      const lower = msg.toLowerCase()
+      const looksLikeInvalid =
+        lower.includes("invalid credentials") ||
+        lower.includes("401") ||
+        lower.includes("\"detail\"") && lower.includes("invalid")
+
+      if (looksLikeInvalid) {
+        setError("Identifiants incorrects. Vérifiez votre nom d’utilisateur et votre mot de passe.")
+      } else if (msg) {
         setError(msg)
       } else {
-        setError("Identifiants invalides.")
+        setError("Connexion impossible. Réessayez dans quelques instants.")
       }
     } finally {
       setLoading(false)

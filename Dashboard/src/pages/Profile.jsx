@@ -22,13 +22,72 @@ import {
   updateProfileMe,
 } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
-import { Heart, Sparkles, FileText, TrendingUp, Clock } from "lucide-react";
+import { Heart, Sparkles, FileText, TrendingUp, Clock, User, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 
 const GlassCard = ({ children, className = "" }) => (
   <Card className={`bg-white/5 backdrop-blur border-white/10 hover:shadow-md hover:shadow-black/20 transition-all ${className}`}>
     {children}
   </Card>
 );
+
+const getInitials = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "U";
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const a = (parts[0] || raw).slice(0, 1);
+  const b = (parts[1] || raw.slice(1, 2) || "").slice(0, 1);
+  return (a + b).toUpperCase();
+};
+
+const passwordStrength = (pw) => {
+  const s = String(pw || "");
+  let score = 0;
+  if (s.length >= 8) score += 1;
+  if (s.length >= 12) score += 1;
+  if (/[a-z]/.test(s) && /[A-Z]/.test(s)) score += 1;
+  if (/\d/.test(s)) score += 1;
+  if (/[^a-zA-Z0-9]/.test(s)) score += 1;
+  const pct = Math.min(100, Math.round((score / 5) * 100));
+  const label = pct >= 80 ? "Fort" : pct >= 45 ? "Moyen" : "Faible";
+  const bar = pct >= 80 ? "bg-emerald-500" : pct >= 45 ? "bg-orange-500" : "bg-red-500";
+  return { score, pct, label, bar };
+};
+
+function PasswordField({ label, value, onChange, autoComplete, error, placeholder }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="space-y-1.5">
+      <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</div>
+      <div className="relative">
+        <Input
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={onChange}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          aria-invalid={!!error}
+          className={[
+            "h-11 rounded-[10px] border-[1.5px] bg-white/80 dark:bg-white/5 px-3 pr-10 py-2",
+            "border-slate-200/90 dark:border-white/10",
+            "placeholder:text-slate-400 placeholder:italic dark:placeholder:text-slate-400/80",
+            "focus-visible:ring-2 focus-visible:ring-indigo-100 dark:focus-visible:ring-indigo-500/20",
+            "focus-visible:ring-offset-0 focus-visible:border-indigo-500",
+            error ? "border-red-300 focus-visible:border-red-500 focus-visible:ring-red-100 dark:border-red-500/40 dark:focus-visible:ring-red-500/20" : "",
+          ].join(" ")}
+          required
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5 dark:text-slate-300 transition"
+          aria-label={show ? "Hide password" : "Show password"}
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function Profile() {
   const { user, setUser } = useAuth();
@@ -42,8 +101,10 @@ export function Profile() {
   const [pwOpen, setPwOpen] = useState(false);
   const [editError, setEditError] = useState("");
   const [pwError, setPwError] = useState("");
-  const [editForm, setEditForm] = useState({ display_name: "", role: "", avatar_url: "" });
+  const [editForm, setEditForm] = useState({ display_name: "", role: "" });
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [pwSubmitting, setPwSubmitting] = useState(false);
 
   const loadAll = async () => {
     const [s, a, me] = await Promise.all([
@@ -104,7 +165,6 @@ export function Profile() {
     setEditForm({
       display_name: base.display_name || base.username || "",
       role: base.role || "Admin",
-      avatar_url: base.avatar_url || "",
     });
     setEditOpen(true);
   };
@@ -113,10 +173,10 @@ export function Profile() {
     e?.preventDefault?.();
     setEditError("");
     try {
+      setEditSubmitting(true);
       const res = await updateProfileMe({
         display_name: editForm.display_name,
         role: editForm.role,
-        avatar_url: editForm.avatar_url,
       });
       // Keep AuthContext in sync for header/avatar.
       setUser({
@@ -131,6 +191,8 @@ export function Profile() {
       await loadAll().catch(() => {});
     } catch (err) {
       setEditError("Impossible de mettre a jour le profil.");
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -156,11 +218,14 @@ export function Profile() {
       return;
     }
     try {
+      setPwSubmitting(true);
       await changePassword(pwForm.current_password, pwForm.new_password);
       await addProfileActivity({ type: "security_action", message: "Changed password" });
       setPwOpen(false);
     } catch (err) {
       setPwError(err?.message || "Mot de passe actuel incorrect (ou erreur serveur).");
+    } finally {
+      setPwSubmitting(false);
     }
   };
 
@@ -213,93 +278,185 @@ export function Profile() {
         </GlassCard>
 
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogContent className="sm:max-w-lg bg-background/80 backdrop-blur border-white/10">
-            <DialogHeader>
-              <DialogTitle>Edit profile</DialogTitle>
-              <DialogDescription>Mettre a jour les informations de base (affichage).</DialogDescription>
-            </DialogHeader>
-            <form onSubmit={submitEdit} className="space-y-3">
-              <div className="space-y-1">
-                <div className="text-sm font-medium">Display name</div>
-                <Input
-                  value={editForm.display_name}
-                  onChange={(e) => setEditForm((p) => ({ ...p, display_name: e.target.value }))}
-                  placeholder="ex: Admin"
-                  required
-                />
+          <DialogContent className="w-full max-w-[420px] rounded-2xl border border-slate-200/70 bg-white p-7 shadow-2xl shadow-indigo-100/60 dark:border-white/10 dark:bg-[#1E1E2E]">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{
+                opacity: 1,
+                scale: 1,
+                x: editError ? [0, -10, 10, -7, 7, 0] : 0,
+              }}
+              transition={{
+                duration: editError ? 0.35 : 0.2,
+                ease: "easeOut",
+              }}
+            >
+              <DialogHeader className="space-y-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100 dark:bg-white/5 dark:text-indigo-200 dark:ring-white/10">
+                      <User className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <DialogTitle className="text-lg font-semibold text-slate-900 dark:text-white">Edit profile</DialogTitle>
+                      <DialogDescription className="text-sm text-slate-400">Mettre à jour vos informations d’affichage.</DialogDescription>
+                    </div>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="mt-5 flex flex-col items-center text-center">
+                <div className="h-16 w-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-200/60">
+                  <span className="text-white font-bold text-xl">
+                    {getInitials(meProfile?.display_name || user?.display_name || user?.username || "")}
+                  </span>
+                </div>
+                <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
+                  {meProfile?.display_name || user?.display_name || user?.username || "User"}
+                </div>
               </div>
-              <div className="space-y-1">
-                <div className="text-sm font-medium">Role</div>
-                <Input
-                  value={editForm.role}
-                  onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
-                  placeholder="ex: Admin, Analyst..."
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-sm font-medium">Avatar URL (optional)</div>
-                <Input
-                  value={editForm.avatar_url}
-                  onChange={(e) => setEditForm((p) => ({ ...p, avatar_url: e.target.value }))}
-                  placeholder="https://..."
-                />
-              </div>
-              {editError ? <div className="text-sm text-destructive">{editError}</div> : null}
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit">Save</Button>
-              </div>
-            </form>
+
+              <form onSubmit={submitEdit} className="mt-5 space-y-4">
+                <div className="space-y-1.5">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Display name</div>
+                  <Input
+                    value={editForm.display_name}
+                    onChange={(e) => setEditForm((p) => ({ ...p, display_name: e.target.value }))}
+                    placeholder="ex: Doha Safri"
+                    required
+                    className="h-11 rounded-[10px] border-[1.5px] border-slate-200/90 bg-white/80 dark:bg-white/5 px-3 py-2 placeholder:text-slate-400 placeholder:italic dark:placeholder:text-slate-400/80 focus-visible:ring-2 focus-visible:ring-indigo-100 dark:focus-visible:ring-indigo-500/20 focus-visible:ring-offset-0 focus-visible:border-indigo-500 dark:border-white/10"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Role</div>
+                  <Input
+                    value={editForm.role}
+                    onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
+                    placeholder="ex: Admin, Analyst..."
+                    className="h-11 rounded-[10px] border-[1.5px] border-slate-200/90 bg-white/80 dark:bg-white/5 px-3 py-2 placeholder:text-slate-400 placeholder:italic dark:placeholder:text-slate-400/80 focus-visible:ring-2 focus-visible:ring-indigo-100 dark:focus-visible:ring-indigo-500/20 focus-visible:ring-offset-0 focus-visible:border-indigo-500 dark:border-white/10"
+                  />
+                </div>
+
+                {editError ? (
+                  <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
+                    {editError}
+                  </div>
+                ) : null}
+
+                <div className="border-t border-slate-100 dark:border-white/10 pt-4 flex items-center justify-end gap-2">
+                  <Button type="button" variant="secondary" className="rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10" onClick={() => setEditOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={editSubmitting}
+                    className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold hover:opacity-90 hover:shadow-lg hover:shadow-indigo-200/60"
+                  >
+                    {editSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Save
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </DialogContent>
         </Dialog>
 
         <Dialog open={pwOpen} onOpenChange={setPwOpen}>
-          <DialogContent className="sm:max-w-lg bg-background/80 backdrop-blur border-white/10">
-            <DialogHeader>
-              <DialogTitle>Change password</DialogTitle>
-              <DialogDescription>Cette action met a jour le mot de passe de ton compte.</DialogDescription>
-            </DialogHeader>
-            <form onSubmit={submitPassword} className="space-y-3">
-              <div className="space-y-1">
-                <div className="text-sm font-medium">Current password</div>
-                <Input
-                  type="password"
+          <DialogContent className="w-full max-w-[420px] rounded-2xl border border-slate-200/70 bg-white p-7 shadow-2xl shadow-indigo-100/60 dark:border-white/10 dark:bg-[#1E1E2E]">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{
+                opacity: 1,
+                scale: 1,
+                x: pwError ? [0, -10, 10, -7, 7, 0] : 0,
+              }}
+              transition={{
+                duration: pwError ? 0.35 : 0.2,
+                ease: "easeOut",
+              }}
+            >
+              <DialogHeader className="space-y-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100 dark:bg-white/5 dark:text-indigo-200 dark:ring-white/10">
+                      <Lock className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <DialogTitle className="text-lg font-semibold text-slate-900 dark:text-white">Change password</DialogTitle>
+                      <DialogDescription className="text-sm text-slate-400">Mettez à jour le mot de passe de votre compte.</DialogDescription>
+                    </div>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <form onSubmit={submitPassword} className="mt-5 space-y-4">
+                <PasswordField
+                  label="Current password"
                   value={pwForm.current_password}
                   onChange={(e) => setPwForm((p) => ({ ...p, current_password: e.target.value }))}
                   autoComplete="current-password"
-                  required
+                  error={pwError}
+                  placeholder="••••••••"
                 />
-              </div>
-              <div className="space-y-1">
-                <div className="text-sm font-medium">New password</div>
-                <Input
-                  type="password"
-                  value={pwForm.new_password}
-                  onChange={(e) => setPwForm((p) => ({ ...p, new_password: e.target.value }))}
-                  autoComplete="new-password"
-                  required
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-sm font-medium">Confirm new password</div>
-                <Input
-                  type="password"
+
+                <div className="space-y-2">
+                  <PasswordField
+                    label="New password"
+                    value={pwForm.new_password}
+                    onChange={(e) => setPwForm((p) => ({ ...p, new_password: e.target.value }))}
+                    autoComplete="new-password"
+                    error={pwError}
+                    placeholder="Min. 8 caractères"
+                  />
+
+                  {pwForm.new_password ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-300">
+                        <span>Force</span>
+                        <span className="font-semibold">{passwordStrength(pwForm.new_password).label}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-white/10 overflow-hidden">
+                        <motion.div
+                          className={`h-full ${passwordStrength(pwForm.new_password).bar}`}
+                          initial={false}
+                          animate={{ width: `${passwordStrength(pwForm.new_password).pct}%` }}
+                          transition={{ duration: 0.2 }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <PasswordField
+                  label="Confirm new password"
                   value={pwForm.confirm_password}
                   onChange={(e) => setPwForm((p) => ({ ...p, confirm_password: e.target.value }))}
                   autoComplete="new-password"
-                  required
+                  error={pwError}
+                  placeholder="••••••••"
                 />
-              </div>
-              {pwError ? <div className="text-sm text-destructive">{pwError}</div> : null}
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setPwOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit">Update password</Button>
-              </div>
-            </form>
+
+                {pwError ? (
+                  <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
+                    {pwError}
+                  </div>
+                ) : null}
+
+                <div className="border-t border-slate-100 dark:border-white/10 pt-4 flex items-center justify-end gap-2">
+                  <Button type="button" variant="secondary" className="rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10" onClick={() => setPwOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={pwSubmitting}
+                    className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold hover:opacity-90 hover:shadow-lg hover:shadow-indigo-200/60"
+                  >
+                    {pwSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Update password
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </DialogContent>
         </Dialog>
 

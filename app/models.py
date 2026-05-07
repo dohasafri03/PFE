@@ -36,6 +36,9 @@ class Notification(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, index=True)  # username
+    # UI profile bucket for this notification (GLOBAL/AI/DATA/CLOUD/DEV/CYBERSECURITY).
+    # NULL/empty means "GLOBAL" for backward compatibility.
+    profile = Column(String, index=True, nullable=True, default="GLOBAL")
     message = Column(Text)
     type = Column(String, index=True)
     opportunity_id = Column(String, index=True, nullable=True)
