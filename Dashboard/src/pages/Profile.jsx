@@ -325,15 +325,15 @@ export function Profile() {
           <div className="relative z-10 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3 sm:gap-4">
               <Avatar className="h-14 w-14 shrink-0 ring-2 ring-white/25 shadow-lg sm:h-16 sm:w-16">
-                <AvatarImage src={(meProfile?.avatar_url || user?.avatar_url) || "/avatars/01.png"} alt="@user" />
+                  <AvatarImage src={(meProfile?.avatar_url || user?.avatar_url) || "/avatars/01.png"} alt="@user" />
                 <AvatarFallback className="bg-white/15 text-sm text-white font-bold sm:text-base">
                   {((meProfile?.display_name || user?.display_name || user?.username || "AD").slice(0, 2)).toUpperCase()}
                 </AvatarFallback>
-              </Avatar>
+                </Avatar>
               <div className="min-w-0">
                 <div className="text-2xl sm:text-3xl font-bold tracking-tight truncate text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
                   {meProfile?.display_name || user?.display_name || user?.username || "Admin"}
-                </div>
+                  </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <Badge className="border-0 bg-white/20 text-white hover:bg-white/25 backdrop-blur-sm">
                     {meProfile?.role || user?.role || "Admin"}
@@ -350,17 +350,17 @@ export function Profile() {
                 onClick={openEdit}
                 className="h-9 rounded-full border-white/20 bg-black/20 px-3 text-xs text-white backdrop-blur hover:bg-white/15 hover:text-white sm:px-4 sm:text-sm"
               >
-                Edit profile
-              </Button>
+                  Edit profile
+                </Button>
               <Button
                 variant="outline"
                 onClick={openPassword}
                 className="h-9 rounded-full border-white/20 bg-black/20 px-3 text-xs text-white backdrop-blur hover:bg-white/15 hover:text-white sm:px-4 sm:text-sm"
               >
-                Change password
-              </Button>
+                  Change password
+                </Button>
+              </div>
             </div>
-          </div>
         </div>
 
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -389,7 +389,7 @@ export function Profile() {
                     </div>
                   </div>
                 </div>
-              </DialogHeader>
+            </DialogHeader>
 
               <div className="mt-5 flex flex-col items-center text-center">
                 <div className="h-16 w-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-200/60">
@@ -405,34 +405,34 @@ export function Profile() {
               <form onSubmit={submitEdit} className="mt-5 space-y-4">
                 <div className="space-y-1.5">
                   <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Display name</div>
-                  <Input
-                    value={editForm.display_name}
-                    onChange={(e) => setEditForm((p) => ({ ...p, display_name: e.target.value }))}
+                <Input
+                  value={editForm.display_name}
+                  onChange={(e) => setEditForm((p) => ({ ...p, display_name: e.target.value }))}
                     placeholder="ex: Doha Safri"
-                    required
+                  required
                     className="h-11 rounded-[10px] border-[1.5px] border-slate-200/90 bg-white/80 dark:bg-white/5 px-3 py-2 placeholder:text-slate-400 placeholder:italic dark:placeholder:text-slate-400/80 focus-visible:ring-2 focus-visible:ring-indigo-100 dark:focus-visible:ring-indigo-500/20 focus-visible:ring-offset-0 focus-visible:border-indigo-500 dark:border-white/10"
-                  />
-                </div>
+                />
+              </div>
                 <div className="space-y-1.5">
                   <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Role</div>
-                  <Input
-                    value={editForm.role}
-                    onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
-                    placeholder="ex: Admin, Analyst..."
+                <Input
+                  value={editForm.role}
+                  onChange={(e) => setEditForm((p) => ({ ...p, role: e.target.value }))}
+                  placeholder="ex: Admin, Analyst..."
                     className="h-11 rounded-[10px] border-[1.5px] border-slate-200/90 bg-white/80 dark:bg-white/5 px-3 py-2 placeholder:text-slate-400 placeholder:italic dark:placeholder:text-slate-400/80 focus-visible:ring-2 focus-visible:ring-indigo-100 dark:focus-visible:ring-indigo-500/20 focus-visible:ring-offset-0 focus-visible:border-indigo-500 dark:border-white/10"
-                  />
-                </div>
+                />
+              </div>
 
                 {editError ? (
                   <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
                     {editError}
-                  </div>
+              </div>
                 ) : null}
 
                 <div className="border-t border-slate-100 dark:border-white/10 pt-4 flex items-center justify-end gap-2">
                   <Button type="button" variant="secondary" className="rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10" onClick={() => setEditOpen(false)}>
-                    Cancel
-                  </Button>
+                  Cancel
+                </Button>
                   <Button
                     type="submit"
                     disabled={editSubmitting}
@@ -441,8 +441,8 @@ export function Profile() {
                     {editSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     Save
                   </Button>
-                </div>
-              </form>
+              </div>
+            </form>
             </motion.div>
           </DialogContent>
         </Dialog>
@@ -473,7 +473,7 @@ export function Profile() {
                     </div>
                   </div>
                 </div>
-              </DialogHeader>
+            </DialogHeader>
 
               <form onSubmit={submitPassword} className="mt-5 space-y-4">
                 <PasswordField
@@ -488,9 +488,9 @@ export function Profile() {
                 <div className="space-y-2">
                   <PasswordField
                     label="New password"
-                    value={pwForm.new_password}
-                    onChange={(e) => setPwForm((p) => ({ ...p, new_password: e.target.value }))}
-                    autoComplete="new-password"
+                  value={pwForm.new_password}
+                  onChange={(e) => setPwForm((p) => ({ ...p, new_password: e.target.value }))}
+                  autoComplete="new-password"
                     error={pwError}
                     placeholder="Min. 8 caractères"
                   />
@@ -507,8 +507,8 @@ export function Profile() {
                           initial={false}
                           animate={{ width: `${passwordStrength(pwForm.new_password).pct}%` }}
                           transition={{ duration: 0.2 }}
-                        />
-                      </div>
+                />
+              </div>
                     </div>
                   ) : null}
                 </div>
@@ -525,13 +525,13 @@ export function Profile() {
                 {pwError ? (
                   <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
                     {pwError}
-                  </div>
+              </div>
                 ) : null}
 
                 <div className="border-t border-slate-100 dark:border-white/10 pt-4 flex items-center justify-end gap-2">
                   <Button type="button" variant="secondary" className="rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10" onClick={() => setPwOpen(false)}>
-                    Cancel
-                  </Button>
+                  Cancel
+                </Button>
                   <Button
                     type="submit"
                     disabled={pwSubmitting}
@@ -540,8 +540,8 @@ export function Profile() {
                     {pwSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     Update password
                   </Button>
-                </div>
-              </form>
+              </div>
+            </form>
             </motion.div>
           </DialogContent>
         </Dialog>

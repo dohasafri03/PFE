@@ -7,7 +7,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, Search, FileSymlink, ExternalLink, Heart } from "lucide-react"
+import { ArrowUpDown, Search, FileSymlink, ExternalLink, Heart, Flame, Sparkles } from "lucide-react"
 
 
 import {
@@ -88,8 +88,15 @@ const resolveBuyerLabel = (rowObj) => {
   return out || "Non identifie"
 }
 
+const parseSimilarityScore = (similarityScore) =>
+  typeof similarityScore === "number" ? similarityScore : parseFloat(similarityScore || "0")
+
+const isHotOpportunity = (row) => String(row?.level || "").trim().toUpperCase() === "HOT"
+
+const isRecommendedOpportunity = (row) => parseSimilarityScore(row?.similarity_score) > 0.75
+
 const getRecommendationTag = (similarityScore) => {
-  const s = typeof similarityScore === "number" ? similarityScore : parseFloat(similarityScore || "0")
+  const s = parseSimilarityScore(similarityScore)
   if (s > 0.75) {
     return (
       <span
@@ -196,10 +203,13 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
   const [globalFilter, setGlobalFilter] = useState("")
   const [likedOnly, setLikedOnly] = useState(false)
   const [serviceFilter, setServiceFilter] = useState("ALL")
+  const [quickFilter, setQuickFilter] = useState(null) // null | "HOT" | "RECOMMENDED"
 
   const isGlobal = String(profile || "").trim().toUpperCase() === "GLOBAL"
 
   const likedCount = useMemo(() => data.filter((d) => !!d.liked).length, [data])
+  const hotCount = useMemo(() => (data || []).filter(isHotOpportunity).length, [data])
+  const recommendedCount = useMemo(() => (data || []).filter(isRecommendedOpportunity).length, [data])
 
   const serviceOptions = useMemo(() => {
     const set = new Set()
@@ -227,8 +237,13 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
         return parts.includes(serviceFilter)
       })
     }
+    if (quickFilter === "HOT") {
+      rows = rows.filter(isHotOpportunity)
+    } else if (quickFilter === "RECOMMENDED") {
+      rows = rows.filter(isRecommendedOpportunity)
+    }
     return rows
-  }, [data, likedOnly, serviceFilter, isGlobal])
+  }, [data, likedOnly, serviceFilter, isGlobal, quickFilter])
 
   const columns = [
     {
@@ -474,7 +489,7 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
       if (!byId.has(key)) byId.set(key, o)
     }
     onVisibleDataChange(Array.from(byId.values()))
-  }, [table, onVisibleDataChange, globalFilter, likedOnly, serviceFilter, tableData])
+  }, [table, onVisibleDataChange, globalFilter, likedOnly, serviceFilter, quickFilter, tableData])
 
   return (
     <div className="min-w-0 max-w-full space-y-4">
@@ -508,12 +523,60 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
         ) : null}
 
         <Button
-          variant={likedOnly ? "default" : "outline"}
-          className="w-full shrink-0 sm:w-auto"
-          onClick={() => setLikedOnly((v) => !v)}
-          title="Show liked opportunities"
+          type="button"
+          variant="outline"
+          className={`w-full shrink-0 border transition-all duration-200 sm:w-auto ${
+            quickFilter === "HOT"
+              ? "border-red-500/60 bg-gradient-to-r from-red-500/15 to-orange-500/15 text-red-700 shadow-[0_0_18px_rgba(239,68,68,0.22)] hover:from-red-500/20 hover:to-orange-500/20 dark:border-red-400/50 dark:from-red-500/25 dark:to-orange-500/20 dark:text-red-200 dark:shadow-[0_0_22px_rgba(239,68,68,0.28)]"
+              : "border-border hover:border-red-500/35 hover:bg-red-500/5 dark:hover:border-red-400/30 dark:hover:bg-red-500/10"
+          }`}
+          onClick={() => setQuickFilter((f) => (f === "HOT" ? null : "HOT"))}
+          title="Afficher uniquement les opportunités HOT"
+          aria-pressed={quickFilter === "HOT"}
         >
-          <Heart className={`mr-2 h-4 w-4 ${likedOnly ? "fill-current" : ""}`} />
+          <Flame className={`mr-2 h-4 w-4 ${quickFilter === "HOT" ? "text-red-600 dark:text-red-300" : "text-red-500/80"}`} />
+          Hot opportunities ({hotCount})
+        </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          className={`w-full shrink-0 border transition-all duration-200 sm:w-auto ${
+            quickFilter === "RECOMMENDED"
+              ? "border-emerald-500/60 bg-gradient-to-r from-emerald-500/15 to-teal-500/15 text-emerald-800 shadow-[0_0_18px_rgba(16,185,129,0.22)] hover:from-emerald-500/20 hover:to-teal-500/20 dark:border-emerald-400/50 dark:from-emerald-500/25 dark:to-teal-500/20 dark:text-emerald-200 dark:shadow-[0_0_22px_rgba(16,185,129,0.28)]"
+              : "border-border hover:border-emerald-500/35 hover:bg-emerald-500/5 dark:hover:border-emerald-400/30 dark:hover:bg-emerald-500/10"
+          }`}
+          onClick={() => setQuickFilter((f) => (f === "RECOMMENDED" ? null : "RECOMMENDED"))}
+          title="Afficher uniquement les opportunités recommandées (score > 75 %)"
+          aria-pressed={quickFilter === "RECOMMENDED"}
+        >
+          <Sparkles
+            className={`mr-2 h-4 w-4 ${
+              quickFilter === "RECOMMENDED" ? "text-emerald-600 dark:text-emerald-300" : "text-emerald-500/80"
+            }`}
+          />
+          Recommended ({recommendedCount})
+        </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          className={`w-full shrink-0 border transition-all duration-200 sm:w-auto ${
+            likedOnly
+              ? "border-rose-500/60 bg-gradient-to-r from-rose-500/15 to-pink-500/15 text-rose-800 shadow-[0_0_18px_rgba(244,63,94,0.22)] hover:from-rose-500/20 hover:to-pink-500/20 dark:border-rose-400/50 dark:from-rose-500/25 dark:to-pink-500/20 dark:text-rose-200 dark:shadow-[0_0_22px_rgba(244,63,94,0.28)]"
+              : "border-border hover:border-rose-500/35 hover:bg-rose-500/5 dark:hover:border-rose-400/30 dark:hover:bg-rose-500/10"
+          }`}
+          onClick={() => setLikedOnly((v) => !v)}
+          title="Afficher uniquement les opportunités likées"
+          aria-pressed={likedOnly}
+        >
+          <Heart
+            className={`mr-2 h-4 w-4 ${
+              likedOnly
+                ? "fill-rose-600 text-rose-600 dark:fill-rose-300 dark:text-rose-300"
+                : "text-rose-500/80"
+            }`}
+          />
           {likedOnly ? "Liked only" : "Show liked"} ({likedCount})
         </Button>
       </div>
