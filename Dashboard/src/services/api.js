@@ -1,3 +1,5 @@
+import { parseBudget } from "@/lib/budget";
+
 // API runs on port 8011 in this project by default (FastAPI/Uvicorn).
 // IMPORTANT: keep the API host aligned with the app host so the auth cookie is sent.
 // (If the app is on localhost and API is on 127.0.0.1, cookies won't match.)
@@ -26,11 +28,9 @@ export const fetchOpportunities = async (profile = "GLOBAL", options = {}) => {
   try {
     // Prefer the pipeline export (same content as n8n-generated CSV) when available.
     const p = String(profile || "GLOBAL").toUpperCase();
-    const includeExcluded = !!options?.includeExcluded;
-    const inc = includeExcluded ? "&include_excluded=true" : "";
     const endpoint = p === "GLOBAL" || p === "ALL"
-      ? `${API_BASE_URL}/results/opportunities?include_excluded=${includeExcluded ? "true" : "false"}`
-      : `${API_BASE_URL}/opportunities?profile=${encodeURIComponent(p)}${inc}`;
+      ? `${API_BASE_URL}/results/opportunities`
+      : `${API_BASE_URL}/opportunities?profile=${encodeURIComponent(p)}`;
 
     const exportResponse = await fetchWithCreds(endpoint);
     if (exportResponse.ok) {
@@ -48,7 +48,7 @@ export const fetchOpportunities = async (profile = "GLOBAL", options = {}) => {
            buyer: c.buyer || c.organization || "Acheteur Inconnu",
            organization: c.organization || c.buyer || "Acheteur Inconnu",
            service: c.service || inferredService || c.sector || "IT",
-           budget: typeof c.budget === "number" ? c.budget : 0,
+           budget: parseBudget(c.budget),
            deadline: c.deadline || null,
            score: Math.round(c.score || 0),
            similarity_score: typeof c.similarity_score === "number" ? c.similarity_score : 0,
@@ -109,7 +109,7 @@ export const fetchOpportunities = async (profile = "GLOBAL", options = {}) => {
       buyer: c.acheteur || 'Acheteur Inconnu',
       organization: c.acheteur || 'Acheteur Inconnu',
        service: (c.domains && c.domains.length > 0) ? c.domains.slice(0, 2).join(' / ') : 'IT',
-      budget: typeof c.budget === 'number' ? c.budget : 0,
+      budget: parseBudget(c.budget),
       deadline: c.deadline || null,
       score: Math.round(c.score || 0),
       similarity_score: typeof c.similarity_score === "number" ? c.similarity_score : 0,

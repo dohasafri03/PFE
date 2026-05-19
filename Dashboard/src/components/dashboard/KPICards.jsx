@@ -149,7 +149,7 @@ export function KPICards({ data, profile = "GLOBAL" }) {
     return (
       <Card
         className={[
-          "group rounded-xl p-0 ring-1 transition-all duration-200",
+          "group rounded-xl p-0 ring-1 transition-all duration-200 min-h-[120px] sm:min-h-[128px]",
           // Light mode: match the soft neutral card background from the reference
           "bg-[#F3F4F6] border border-black/5 shadow-sm",
           // Hover: premium deep mauve for all KPI cards
@@ -160,16 +160,16 @@ export function KPICards({ data, profile = "GLOBAL" }) {
           t.ring,
         ].join(" ")}
       >
-        <CardContent className="p-4 sm:p-5">
+        <CardContent className="flex h-full flex-col justify-center px-5 py-6 sm:px-6 sm:py-7">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
-              <div className={`h-10 w-10 rounded-xl ${t.iconBg} ring-1 ring-border flex items-center justify-center transition-colors group-hover:bg-white/10 group-hover:ring-white/20`}>
+              <div className={`h-11 w-11 shrink-0 rounded-xl ${t.iconBg} ring-1 ring-border flex items-center justify-center transition-colors group-hover:bg-white/10 group-hover:ring-white/20`}>
                 <div className={`${t.iconText} transition-colors group-hover:text-white`}>{icon}</div>
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-muted-foreground transition-colors group-hover:text-white/80">{title}</div>
-                <div className="mt-1 text-2xl font-bold tracking-tight text-foreground truncate transition-colors group-hover:text-white">{value}</div>
-                {subtext ? <div className="mt-1 text-xs text-muted-foreground transition-colors group-hover:text-white/70">{subtext}</div> : null}
+                <div className="mt-2 text-2xl font-bold tracking-tight text-foreground truncate transition-colors group-hover:text-white">{value}</div>
+                {subtext ? <div className="mt-2 text-xs text-muted-foreground transition-colors group-hover:text-white/70">{subtext}</div> : null}
               </div>
             </div>
             {right ? <div className="shrink-0">{right}</div> : null}

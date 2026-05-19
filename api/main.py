@@ -70,14 +70,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Optional SQLite persistence (SQLAlchemy). The app works without it, but the DB stays empty.
+# SQLAlchemy persistence (PostgreSQL in this project).
 try:
     from sqlalchemy.orm import Session
     from sqlalchemy import or_
 
-    from app.database import get_db
+    from app.database import get_db, SessionLocal
     from app.init_db import ensure_db_schema
-    from app.models import Opportunity, Notification, Like
+    from app.models import Opportunity, Notification, Like, User, GeneratedDocument
 
     _DB_AVAILABLE = True
 except Exception as e:
@@ -152,11 +152,11 @@ async def favicon():
 
 
 @app.post("/auth/login")
-async def auth_login(req: LoginRequest, response: Response):
+async def auth_login(req: LoginRequest, response: Response, db=Depends(get_db) if _DB_AVAILABLE else None):
     if not AUTH_ENABLED:
         return {"enabled": False, "message": "Auth disabled"}
 
-    if not _verify_login(req.username or "", req.password or ""):
+    if not _verify_login(req.username or "", req.password or "", db=db):
         raise HTTPException(401, "Invalid credentials")
 
     exp = int(time.time()) + 60 * 60 * 24 * 7  # 7 days
@@ -178,7 +178,20 @@ async def auth_login(req: LoginRequest, response: Response):
     except Exception:
         pass
 
-    profile = _get_user_profile(req.username)
+    try:
+        if _DB_AVAILABLE and db is not None:
+            row = db.query(User).filter(User.username == str(req.username or "")).one_or_none()
+            if row is not None:
+                row.last_login = datetime.utcnow()
+                row.updated_at = datetime.utcnow()
+                db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    profile = _get_user_profile(req.username, db=db)
     return {"ok": True, **profile}
 
 
@@ -189,28 +202,28 @@ async def auth_logout(response: Response):
 
 
 @app.get("/auth/me")
-async def auth_me(request: Request):
+async def auth_me(request: Request, db=Depends(get_db) if _DB_AVAILABLE else None):
     user = require_auth(request)
     # If AUTH_ENABLED=0, user is None.
     if not user:
         return {"ok": True, "username": ""}
-    return {"ok": True, **_get_user_profile(user)}
+    return {"ok": True, **_get_user_profile(user, db=db)}
 
 
 @app.post("/auth/change-password")
-async def auth_change_password(request: Request, payload: ChangePasswordRequest):
+async def auth_change_password(request: Request, payload: ChangePasswordRequest, db=Depends(get_db) if _DB_AVAILABLE else None):
     username = require_auth(request)
     if not username:
         raise HTTPException(401, "Not authenticated")
 
     # Verify current password either against users.json or env fallback.
-    if not _verify_login(username, payload.current_password):
+    if not _verify_login(username, payload.current_password, db=db):
         raise HTTPException(400, "Current password is invalid")
 
     if len(payload.new_password or "") < 6:
         raise HTTPException(400, "New password must be at least 6 characters")
 
-    _set_user_password(username, payload.new_password)
+    _set_user_password(username, payload.new_password, db=db)
     _append_activity(
         {
             "type": "security_action",
@@ -262,6 +275,66 @@ def _save_users(data: dict[str, dict]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _normalize_user_profile_value(raw: Optional[str]) -> str:
+    profile = str(raw or "").strip().upper()
+    if profile == "CYBER":
+        profile = "CYBERSECURITY"
+    if profile not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+        profile = "GLOBAL"
+    return profile
+
+
+def _user_row_to_profile(row: "User") -> dict:
+    return {
+        "username": str(getattr(row, "username", "") or ""),
+        "display_name": getattr(row, "display_name", "") or getattr(row, "username", "") or "",
+        "role": getattr(row, "role", "") or "Admin",
+        "profile": _normalize_user_profile_value(getattr(row, "profile", "") or getattr(row, "role", "")),
+        "avatar_url": getattr(row, "avatar_url", "") or "",
+    }
+
+
+def _get_user_profile(username: str, db: Optional["Session"] = None) -> dict:
+    u = (username or "").strip()
+    if not u:
+        return {"username": "", "display_name": "", "role": "Admin", "profile": "GLOBAL", "avatar_url": ""}
+
+    session = db
+    own_session = False
+    if _DB_AVAILABLE and session is None:
+        try:
+            session = SessionLocal()
+            own_session = True
+        except Exception:
+            session = None
+
+    try:
+        if _DB_AVAILABLE and session is not None:
+            row = session.query(User).filter(User.username == u).one_or_none()
+            if row is not None:
+                return _user_row_to_profile(row)
+    except Exception:
+        pass
+    finally:
+        if own_session and session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    users = _load_users()
+    entry = users.get(u) if isinstance(users, dict) else None
+    if isinstance(entry, dict):
+        return {
+            "username": u,
+            "display_name": entry.get("display_name") or u,
+            "role": entry.get("role") or "Admin",
+            "profile": _normalize_user_profile_value(entry.get("profile") or entry.get("role")),
+            "avatar_url": entry.get("avatar_url") or "",
+        }
+    return {"username": u, "display_name": u, "role": "Admin", "profile": "GLOBAL", "avatar_url": ""}
+
+
 def _hash_password(password: str, salt_b64: str) -> str:
     salt = base64.b64decode(salt_b64.encode("ascii"))
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
@@ -277,71 +350,107 @@ def _verify_password(password: str, salt_b64: str, expected_hash_b64: str) -> bo
     return hmac.compare_digest(computed, expected_hash_b64)
 
 
-def _get_user_profile(username: str) -> dict:
-    users = _load_users()
-    u = users.get(username) if isinstance(users, dict) else None
-    if isinstance(u, dict):
-        raw_profile = str(u.get("profile") or u.get("role") or "").strip().upper()
-        if raw_profile == "CYBER":
-            raw_profile = "CYBERSECURITY"
-        if raw_profile not in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
-            raw_profile = "GLOBAL"
-        return {
-            "username": username,
-            "display_name": u.get("display_name") or username,
-            "role": u.get("role") or "Admin",
-            "profile": raw_profile,
-            "avatar_url": u.get("avatar_url") or "",
-        }
-    return {"username": username, "display_name": username, "role": "Admin", "profile": "GLOBAL", "avatar_url": ""}
-
-
-def _verify_login(username: str, password: str) -> bool:
-    """Verify credentials: prefer file-based users; fallback to env default admin/admin."""
-    users = _load_users()
-    u = users.get(username) if isinstance(users, dict) else None
-    if isinstance(u, dict) and u.get("salt") and u.get("password_hash"):
+def _verify_login(username: str, password: str, db: Optional["Session"] = None) -> bool:
+    """Verify credentials from PostgreSQL users table; fallback to legacy users.json during migration."""
+    u = (username or "").strip()
+    session = db
+    own_session = False
+    if _DB_AVAILABLE and session is None:
         try:
-            return _verify_password(password, salt_b64=str(u["salt"]), expected_hash_b64=str(u["password_hash"]))
+            session = SessionLocal()
+            own_session = True
+        except Exception:
+            session = None
+    try:
+        if _DB_AVAILABLE and session is not None:
+            row = session.query(User).filter(User.username == u).one_or_none()
+            if row is not None and getattr(row, "password_salt", None) and getattr(row, "password_hash", None):
+                try:
+                    return _verify_password(password, salt_b64=str(row.password_salt), expected_hash_b64=str(row.password_hash))
+                except Exception:
+                    return False
+    except Exception:
+        pass
+    finally:
+        if own_session and session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    users = _load_users()
+    entry = users.get(u) if isinstance(users, dict) else None
+    if isinstance(entry, dict) and entry.get("salt") and entry.get("password_hash"):
+        try:
+            return _verify_password(password, salt_b64=str(entry["salt"]), expected_hash_b64=str(entry["password_hash"]))
         except Exception:
             return False
     return False
 
 
-def _set_user_password(username: str, new_password: str) -> None:
-    users = _load_users()
-    entry = users.get(username) if isinstance(users, dict) else None
-    if not isinstance(entry, dict):
-        entry = {"role": "Admin", "display_name": username, "avatar_url": ""}
+def _set_user_password(username: str, new_password: str, db: Optional["Session"] = None) -> None:
+    u = (username or "").strip()
     salt_b64 = _new_salt_b64()
+    password_hash = _hash_password(new_password, salt_b64=salt_b64)
+
+    if _DB_AVAILABLE and db is not None:
+        row = db.query(User).filter(User.username == u).one_or_none()
+        if row is None:
+            row = User(username=u, display_name=u, role="Admin", profile="GLOBAL", avatar_url="")
+            db.add(row)
+        row.password_salt = salt_b64
+        row.password_hash = password_hash
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return
+
+    users = _load_users()
+    entry = users.get(u) if isinstance(users, dict) else None
+    if not isinstance(entry, dict):
+        entry = {"role": "Admin", "display_name": u, "avatar_url": ""}
     entry["salt"] = salt_b64
-    entry["password_hash"] = _hash_password(new_password, salt_b64=salt_b64)
-    users[username] = entry
+    entry["password_hash"] = password_hash
+    users[u] = entry
     _save_users(users)
 
 
-def _update_user_profile(username: str, update: ProfileUpdateRequest) -> dict:
+def _update_user_profile(username: str, update: ProfileUpdateRequest, db: Optional["Session"] = None) -> dict:
+    u = (username or "").strip()
+    if _DB_AVAILABLE and db is not None:
+        row = db.query(User).filter(User.username == u).one_or_none()
+        if row is None:
+            row = User(username=u, display_name=u, role="Admin", profile="GLOBAL", avatar_url="")
+            db.add(row)
+
+        if update.display_name is not None:
+            row.display_name = update.display_name.strip() or u
+        if update.role is not None:
+            row.role = update.role.strip() or row.role or "Admin"
+        if update.profile is not None:
+            row.profile = _normalize_user_profile_value(update.profile)
+        if update.avatar_url is not None:
+            row.avatar_url = update.avatar_url.strip()
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return _user_row_to_profile(row)
+
     users = _load_users()
-    entry = users.get(username) if isinstance(users, dict) else None
+    entry = users.get(u) if isinstance(users, dict) else None
     if not isinstance(entry, dict):
-        entry = {"role": "Admin", "display_name": username, "avatar_url": ""}
+        entry = {"role": "Admin", "display_name": u, "avatar_url": ""}
 
     if update.display_name is not None:
-        entry["display_name"] = update.display_name.strip() or username
+        entry["display_name"] = update.display_name.strip() or u
     if update.role is not None:
         entry["role"] = update.role.strip() or entry.get("role") or "Admin"
     if update.profile is not None:
-        prof = update.profile.strip().upper()
-        if prof == "CYBER":
-            prof = "CYBERSECURITY"
-        if prof in {"GLOBAL", "AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
-            entry["profile"] = prof
+        entry["profile"] = _normalize_user_profile_value(update.profile)
     if update.avatar_url is not None:
         entry["avatar_url"] = update.avatar_url.strip()
 
-    users[username] = entry
+    users[u] = entry
     _save_users(users)
-    return _get_user_profile(username)
+    return _get_user_profile(u)
 
 
 def _ensure_default_profile_users() -> None:
@@ -377,14 +486,12 @@ def _ensure_default_profile_users() -> None:
     users = _load_users()
     changed = False
 
-    # Ensure existing admin gets a profile (keeps current password).
     admin = users.get("admin") if isinstance(users, dict) else None
     if isinstance(admin, dict) and not admin.get("profile"):
         admin["profile"] = "GLOBAL"
         users["admin"] = admin
         changed = True
 
-    # Ensure profile users exist.
     for uname, profile, pwd in defaults:
         entry = users.get(uname) if isinstance(users, dict) else None
         if not isinstance(entry, dict):
@@ -399,7 +506,7 @@ def _ensure_default_profile_users() -> None:
     if changed:
         _save_users(users)
 
-    # Set passwords for newly created accounts (only if missing hash).
+    # Keep backward-compatible bootstrap file complete; DB migration happens on startup.
     users = _load_users()
     for uname, profile, pwd in defaults:
         entry = users.get(uname) if isinstance(users, dict) else None
@@ -611,9 +718,140 @@ def _save_auth_audit(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _sync_users_file_to_db(db: "Session") -> int:
+    if not _DB_AVAILABLE or db is None:
+        return 0
+    users = _load_users()
+    if not isinstance(users, dict) or not users:
+        return 0
+    audit = _load_auth_audit()
+
+    changed = 0
+    for username, entry in users.items():
+        if not username or not isinstance(entry, dict):
+            continue
+        row = db.query(User).filter(User.username == str(username)).one_or_none()
+        created = row is None
+        if created:
+            row = User(username=str(username))
+            db.add(row)
+
+        row.display_name = str(entry.get("display_name") or username)
+        row.role = str(entry.get("role") or "Admin")
+        row.profile = _normalize_user_profile_value(entry.get("profile") or entry.get("role"))
+        row.avatar_url = str(entry.get("avatar_url") or "")
+        if entry.get("salt"):
+            row.password_salt = str(entry.get("salt") or "")
+        if entry.get("password_hash"):
+            row.password_hash = str(entry.get("password_hash") or "")
+        raw_last_login = ((audit.get(str(username)) or {}) if isinstance(audit, dict) else {}).get("last_login")
+        if raw_last_login and getattr(row, "last_login", None) is None:
+            try:
+                row.last_login = datetime.fromisoformat(str(raw_last_login))
+            except Exception:
+                pass
+        row.updated_at = datetime.utcnow()
+        if getattr(row, "created_at", None) is None:
+            row.created_at = datetime.utcnow()
+        changed += 1 if created else 0
+
+    db.commit()
+    return changed
+
+
+def _sync_generated_documents_from_fs(db: "Session") -> int:
+    if not _DB_AVAILABLE or db is None:
+        return 0
+
+    dossiers_root = PROJECT_ROOT / "dossiers_generes"
+    db.query(GeneratedDocument).delete()
+    if not dossiers_root.exists():
+        db.commit()
+        return 0
+
+    titles = _load_latest_pipeline_titles_index()
+    deadlines = _load_latest_pipeline_deadlines_index()
+    svc = _load_latest_pipeline_service_domains_index()
+    rows_added = 0
+
+    for folder in sorted([d for d in dossiers_root.iterdir() if d.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True):
+        selected = _pick_latest_dossiers(list(folder.iterdir()))
+        if not selected:
+            continue
+
+        generated_at = datetime.fromtimestamp(max(f.stat().st_mtime for f in selected))
+        opportunity_id = ""
+        title = ""
+        service = ""
+        domains: list[str] = []
+        deadline_date = None
+
+        for oid, t in titles.items():
+            if _consultation_folder_name(oid) == folder.name:
+                opportunity_id = oid
+                title = t
+                dl = deadlines.get(oid)
+                if dl:
+                    try:
+                        deadline_date = datetime.fromisoformat(dl).date()
+                    except ValueError:
+                        deadline_date = None
+                sd = svc.get(oid) or {}
+                if isinstance(sd, dict):
+                    service = str(sd.get("service") or "")
+                    raw_doms = sd.get("domains") or []
+                    if isinstance(raw_doms, list):
+                        domains = [str(d).upper() for d in raw_doms if d]
+                break
+
+        if deadline_date is None:
+            dl = _load_dossier_deadline_from_analysis(folder)
+            if dl:
+                try:
+                    deadline_date = datetime.fromisoformat(dl).date()
+                except ValueError:
+                    deadline_date = None
+
+        for f in selected:
+            name_lower = f.name.lower()
+            kind = "technique" if "technique" in name_lower else "administratif"
+            row = GeneratedDocument(
+                opportunity_id=opportunity_id,
+                folder=folder.name,
+                title=title,
+                service=service,
+                domains=json.dumps(domains, ensure_ascii=False),
+                deadline=deadline_date,
+                generated_at=generated_at,
+                file_name=f.name,
+                file_path=str(f.relative_to(dossiers_root)),
+                ext=f.suffix.lower().lstrip("."),
+                kind=kind,
+                size_kb=round(f.stat().st_size / 1024, 1),
+                modified_at=datetime.fromtimestamp(f.stat().st_mtime),
+            )
+            db.add(row)
+            rows_added += 1
+
+    db.commit()
+    return rows_added
+
+
 def _list_known_users() -> list[str]:
-    """Return all known usernames (users.json + AUTH_USERNAME fallback)."""
+    """Return all known usernames (prefer DB, fallback to legacy users.json)."""
     users = set()
+    if _DB_AVAILABLE:
+        try:
+            session = SessionLocal()
+            try:
+                for row in session.query(User.username).all():
+                    uname = str(row[0] or "").strip()
+                    if uname:
+                        users.add(uname)
+            finally:
+                session.close()
+        except Exception:
+            pass
     try:
         users_data = _load_users()
         for k in (users_data or {}).keys():
@@ -651,6 +889,18 @@ def _user_has_admin_visibility(username: str) -> bool:
     if u.lower() == "admin":
         return True
     try:
+        if _DB_AVAILABLE:
+            session = SessionLocal()
+            try:
+                row = session.query(User).filter(User.username == u).one_or_none()
+                if row is not None:
+                    role = str(getattr(row, "role", "") or "").strip().upper()
+                    if role in {"ADMIN", "ADMINISTRATOR", "SUPERADMIN", "ROOT"}:
+                        return True
+                    if str(getattr(row, "role", "") or "").strip() == "Admin":
+                        return True
+            finally:
+                session.close()
         users = _load_users()
         entry = users.get(u) if isinstance(users, dict) else None
         if isinstance(entry, dict):
@@ -851,19 +1101,19 @@ async def profile_stats(request: Request, db=Depends(get_db) if _DB_AVAILABLE el
 
 
 @app.get("/profile/me")
-async def profile_me(request: Request):
+async def profile_me(request: Request, db=Depends(get_db) if _DB_AVAILABLE else None):
     user = require_auth(request)
     if not user:
         raise HTTPException(401, "Not authenticated")
-    return {"ok": True, **_get_user_profile(user)}
+    return {"ok": True, **_get_user_profile(user, db=db)}
 
 
 @app.post("/profile/me")
-async def profile_me_update(request: Request, body: ProfileUpdateRequest):
+async def profile_me_update(request: Request, body: ProfileUpdateRequest, db=Depends(get_db) if _DB_AVAILABLE else None):
     user = require_auth(request)
     if not user:
         raise HTTPException(401, "Not authenticated")
-    profile = _update_user_profile(user, body)
+    profile = _update_user_profile(user, body, db=db)
     _append_activity(
         {
             "user": user,
@@ -920,10 +1170,19 @@ async def profile_activity_add(request: Request, body: ActivityEventRequest):
 
 
 @app.get("/profile/security")
-async def profile_security(request: Request):
+async def profile_security(request: Request, db=Depends(get_db) if _DB_AVAILABLE else None):
     user = require_auth(request)
-    audit = _load_auth_audit()
-    last_login = (audit.get(user) or {}).get("last_login")
+    last_login = None
+    try:
+        if _DB_AVAILABLE and db is not None:
+            row = db.query(User).filter(User.username == str(user)).one_or_none()
+            if row is not None and getattr(row, "last_login", None):
+                last_login = row.last_login.isoformat()
+    except Exception:
+        last_login = None
+    if not last_login:
+        audit = _load_auth_audit()
+        last_login = (audit.get(user) or {}).get("last_login")
 
     token = request.cookies.get(AUTH_COOKIE_NAME) or ""
     payload = _verify_token(token) if token else None
@@ -1288,6 +1547,8 @@ def _load_latest_raw_scrape_index() -> dict[str, dict[str, str]]:
                 idx[ref] = {
                     "acheteur": str(row.get("acheteur") or "").strip(),
                     "objet": str(row.get("objet") or "").strip(),
+                    "budget_estime": str(row.get("budget_estime") or "").strip(),
+                    "estimation_budget": str(row.get("estimation_budget") or "").strip(),
                 }
         return idx
     except Exception:
@@ -1349,6 +1610,227 @@ def _parse_pipeline_budget(value: Optional[str]) -> float:
         return 0.0
 
 
+def _pipeline_row_budget(row: Optional[dict]) -> float:
+    """Lit le budget depuis une ligne d'export pipeline (clés variables selon fichiers / Excel)."""
+    if not isinstance(row, dict):
+        return 0.0
+    for key in (
+        "Budget_Estime",
+        "Budget Estime",
+        "Budget_estime",
+        "budget_estime",
+        "Budget",
+        "budget",
+    ):
+        if key in row and row.get(key) not in (None, "", "-"):
+            b = _parse_pipeline_budget(str(row.get(key)))
+            if b > 0:
+                return b
+    for k, val in row.items():
+        if val in (None, "", "-"):
+            continue
+        if "budget" in str(k).lower():
+            b = _parse_pipeline_budget(str(val))
+            if b > 0:
+                return b
+    return 0.0
+
+
+def _budget_from_scrape_dict(row: Optional[dict]) -> float:
+    """Budget depuis le CSV scrape brut (budget_estime, etc.)."""
+    if not isinstance(row, dict):
+        return 0.0
+    for key in (
+        "budget_estime",
+        "estimation_budget",
+        "Budget_Estime",
+        "Budget Estime",
+        "budget",
+    ):
+        val = row.get(key)
+        if val not in (None, "", "-"):
+            b = _parse_pipeline_budget(str(val))
+            if b > 0:
+                return b
+    return 0.0
+
+
+def _resolve_opportunity_budget(
+    *,
+    db_budget: float = 0.0,
+    pipeline_row: Optional[dict] = None,
+    scrape_row: Optional[dict] = None,
+    consultation_budget: Optional[str] = None,
+    portal_budget: float = 0.0,
+) -> float:
+    """Prend le meilleur budget disponible (DB, export pipeline, scrape, cache portail)."""
+    best = max(0.0, float(db_budget or 0.0))
+    if pipeline_row:
+        b = _pipeline_row_budget(pipeline_row)
+        if b > best:
+            best = b
+    if scrape_row:
+        b = _budget_from_scrape_dict(scrape_row)
+        if b > best:
+            best = b
+    if consultation_budget:
+        b = _parse_pipeline_budget(str(consultation_budget))
+        if b > best:
+            best = b
+    if portal_budget > best:
+        best = float(portal_budget)
+    return best
+
+
+_BUDGET_CACHE_PATH = PROJECT_ROOT / "data" / "budget_cache.json"
+_budget_cache_lock = threading.Lock()
+_budget_cache_mem: Optional[dict] = None
+
+_PORTAL_BUDGET_PATTERNS = (
+    r"Estimation\s*\(en Dhs TTC\)\s*\n(?:[^\d\n]*\n)*\s*([\d][\d\s,.]+)",
+    r"Estimation[^:\n]*?:\s*\n(?:[^\d\n]*\n)*\s*([\d][\d\s,.]+)",
+    r"Estimation[^:\n]*?:\s*([\d\s,.]+(?:MAD|DH|Dhs[^\n]{0,20}))",
+)
+
+
+def _load_budget_cache() -> dict:
+    global _budget_cache_mem
+    with _budget_cache_lock:
+        if isinstance(_budget_cache_mem, dict):
+            return dict(_budget_cache_mem)
+        data: dict = {}
+        if _BUDGET_CACHE_PATH.exists():
+            try:
+                raw = json.loads(_BUDGET_CACHE_PATH.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = raw
+            except Exception:
+                data = {}
+        _budget_cache_mem = data
+        return dict(data)
+
+
+def _save_budget_cache(cache: dict) -> None:
+    global _budget_cache_mem
+    with _budget_cache_lock:
+        _budget_cache_mem = dict(cache)
+        _BUDGET_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _BUDGET_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _portal_cached_budget(ref: str) -> float:
+    ref_key = str(ref or "").strip()
+    if not ref_key:
+        return 0.0
+    entry = _load_budget_cache().get(ref_key) or {}
+    try:
+        b = float(entry.get("budget") or 0.0)
+    except (TypeError, ValueError):
+        b = 0.0
+    if b > 0:
+        return b
+    raw = str(entry.get("raw") or "").strip()
+    if raw:
+        return _parse_pipeline_budget(raw)
+    return 0.0
+
+
+def _fetch_portal_estimation_budget(url: str) -> tuple[float, str]:
+    """Extrait l'estimation TTC depuis la fiche marchespublics.gov.ma (PRADO)."""
+    u = str(url or "").strip()
+    if not u or "marchespublics.gov.ma" not in u:
+        return 0.0, ""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        r = requests.get(
+            u,
+            timeout=25,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MarcheAI/1.0)"},
+        )
+        if r.status_code != 200:
+            return 0.0, ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        text = soup.get_text(separator="\n", strip=True)
+        for pat in _PORTAL_BUDGET_PATTERNS:
+            m = re.search(pat, text, re.I)
+            if not m:
+                continue
+            raw = str(m.group(1) or "").strip()
+            val = _parse_pipeline_budget(raw)
+            if val > 0:
+                return val, raw
+    except Exception as exc:
+        logger.debug("Portal budget fetch failed for %s: %s", u, exc)
+    return 0.0, ""
+
+
+def _enrich_opportunity_budgets_from_portal(db: "Session", *, max_fetch: int = 50) -> dict:
+    """
+    Récupère les budgets manquants depuis le portail (URL de consultation) et met à jour la DB + cache.
+    """
+    if not _DB_AVAILABLE:
+        return {"fetched": 0, "updated": 0, "cached": 0}
+
+    from app.models import Opportunity
+
+    cache = _load_budget_cache()
+    updated = 0
+    fetched = 0
+    cached_hits = 0
+    limit = max(1, int(max_fetch or 50))
+
+    opps = db.query(Opportunity).all()
+    for o in opps:
+        if float(getattr(o, "budget", 0.0) or 0.0) > 0:
+            continue
+        ref = str(getattr(o, "ref", "") or "").strip()
+        url = str(getattr(o, "url", "") or "").strip()
+        if not ref or not url:
+            continue
+
+        entry = cache.get(ref) or {}
+        budget_val = 0.0
+        raw_label = str(entry.get("raw") or "").strip()
+
+        if entry.get("budget"):
+            try:
+                budget_val = float(entry.get("budget") or 0.0)
+            except (TypeError, ValueError):
+                budget_val = 0.0
+        elif raw_label:
+            budget_val = _parse_pipeline_budget(raw_label)
+
+        if budget_val <= 0:
+            if fetched >= limit:
+                continue
+            budget_val, raw_label = _fetch_portal_estimation_budget(url)
+            fetched += 1
+            cache[ref] = {
+                "budget": budget_val,
+                "raw": raw_label,
+                "url": url,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+            time.sleep(0.35)
+        else:
+            cached_hits += 1
+
+        if budget_val > 0:
+            o.budget = budget_val
+            updated += 1
+
+    if cache:
+        _save_budget_cache(cache)
+    if updated:
+        db.commit()
+    return {"fetched": fetched, "updated": updated, "cached": cached_hits}
+
+
 def _parse_pipeline_deadline(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -1387,10 +1869,6 @@ def _deadline_is_expired(deadline_iso: Optional[str], today: Optional[date] = No
             return False
     t = today or date.today()
     return d < t
-    try:
-        return datetime.fromisoformat(iso).date()
-    except ValueError:
-        return None
 
 
 def _compute_rag_status(
@@ -2037,6 +2515,11 @@ def _opportunity_dict_from_pipeline_row(row: dict, raw_scrape_index: dict) -> Op
         buyer_norm = cand or buyer_norm
 
     objet = str((raw_scrape_index.get(oid) or {}).get("objet") or "").strip()
+    scrape_raw = raw_scrape_index.get(oid) or {}
+    portal_b = _portal_cached_budget(oid)
+    budget = _resolve_opportunity_budget(
+        pipeline_row=row, scrape_row=scrape_raw, portal_budget=portal_b
+    )
 
     return {
         "id": oid,
@@ -2053,7 +2536,7 @@ def _opportunity_dict_from_pipeline_row(row: dict, raw_scrape_index: dict) -> Op
         "organization": buyer_norm,
         "objet": objet,
         "deadline": _parse_pipeline_deadline(row.get("Deadline")),
-        "budget": _parse_pipeline_budget(row.get("Budget_Estime")),
+        "budget": budget,
         "score": score,
         "description_technique": desc_t,
         "description_fonctionnelle": desc_f,
@@ -2196,6 +2679,7 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
     # SessionLocal has autoflush=False; without a local cache, duplicate refs in the same CSV
     # can create multiple pending rows and fail the UNIQUE(ref) constraint at commit time.
     by_ref: dict[str, Opportunity] = {}
+    scrape_index = _load_latest_raw_scrape_index()
 
     with open(latest, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f, delimiter=";")
@@ -2209,7 +2693,7 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
             level = (row.get("Priorite") or "").strip()
             qualification = (row.get("Qualification") or "").strip()
 
-            budget = _parse_pipeline_budget(row.get("Budget_Estime"))
+            budget = _resolve_opportunity_budget(pipeline_row=row, scrape_row=scrape_index.get(ref))
             deadline = _parse_pipeline_deadline_date(row.get("Deadline"))
             score = _parse_pipeline_score(qualification)
 
@@ -2261,6 +2745,47 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
 
     db.commit()
 
+    _sync_db_from_pipeline_results_notifications(db, new_hot_refs)
+
+    return {"inserted": inserted, "updated": updated, "source": str(latest)}
+
+
+def _refresh_opportunity_budgets_from_pipeline(db: "Session") -> int:
+    """
+    Met à jour les budgets en base depuis le dernier pipeline_results_*.csv et le scrape brut.
+    Utile quand la DB a été remplie avant l'enrichissement budget.
+    """
+    if not _DB_AVAILABLE:
+        return 0
+    latest = _find_latest("pipeline_results_*.csv")
+    if not latest or not latest.exists():
+        return 0
+
+    scrape_index = _load_latest_raw_scrape_index()
+    changed = 0
+    with open(latest, encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            ref = (row.get("ID") or "").strip()
+            if not ref:
+                continue
+            obj = db.query(Opportunity).filter(Opportunity.ref == ref).one_or_none()
+            if obj is None:
+                continue
+            new_budget = _resolve_opportunity_budget(
+                db_budget=float(getattr(obj, "budget", 0.0) or 0.0),
+                pipeline_row=row,
+                scrape_row=scrape_index.get(ref),
+            )
+            if new_budget > 0 and abs(new_budget - float(getattr(obj, "budget", 0.0) or 0.0)) > 0.01:
+                obj.budget = new_budget
+                changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
+def _sync_db_from_pipeline_results_notifications(db: "Session", new_hot_refs: list) -> None:
     # Create notifications for new HOT opportunities (best-effort).
     try:
         if new_hot_refs:
@@ -2305,7 +2830,6 @@ def _sync_db_from_pipeline_results(db: "Session") -> dict:
             db.rollback()
         except Exception:
             pass
-    return {"source": str(latest), "inserted": inserted, "updated": updated}
 
 
 def _pick_latest_dossiers(files: list[Path]) -> list[Path]:
@@ -2777,7 +3301,10 @@ async def pipeline_score(
             description_fonctionnelle = (extra.get("Description_Fonctionnelle") or "").strip()
             requirements = _parse_pipeline_requirements(extra.get("Requirements"))
             deadline_iso = _parse_pipeline_deadline(extra.get("Deadline"))
-            budget = _parse_pipeline_budget(extra.get("Budget_Estime"))
+            budget = _resolve_opportunity_budget(
+                pipeline_row=extra,
+                consultation_budget=(c.estimation_budget or c.budget_estime or ""),
+            )
 
             if bool(getattr(req, "require_valid_deadline", True)):
                 # Only keep opportunities with a valid, non-expired deadline.
@@ -2998,6 +3525,11 @@ async def pipeline_generate_dossiers(req: GenerateRequest, request: Request):
                 max_consultations=req.max_consultations,
                 skip_existing=req.skip_existing,
             )
+            if _DB_AVAILABLE:
+                try:
+                    _sync_generated_documents_from_fs(db)
+                except Exception:
+                    pass
             _status["dossiers"]["last_result"] = result
             _status["dossiers"]["last_run"] = datetime.now().isoformat()
             return result
@@ -3114,6 +3646,15 @@ async def pipeline_generate_dossiers_async(req: GenerateRequest, request: Reques
                 max_consultations=req.max_consultations,
                 skip_existing=req.skip_existing,
             )
+            if _DB_AVAILABLE:
+                try:
+                    session = SessionLocal()
+                    try:
+                        _sync_generated_documents_from_fs(session)
+                    finally:
+                        session.close()
+                except Exception:
+                    pass
             _status["dossiers"]["last_result"] = result
             _status["dossiers"]["last_run"] = datetime.now().isoformat()
         except Exception as e:
@@ -3169,12 +3710,6 @@ async def results_latest():
 
 @app.on_event("startup")
 def _startup_db():
-    # Auth bootstrap does not depend on SQLAlchemy.
-    try:
-        _ensure_default_profile_users()
-    except Exception:
-        pass
-
     # Defensive reset: if the process previously crashed during scraping, don't stay stuck in running=true.
     try:
         if isinstance(_status.get("scraping"), dict):
@@ -3187,22 +3722,45 @@ def _startup_db():
         pass
 
     if not _DB_AVAILABLE:
+        try:
+            _ensure_default_profile_users()
+        except Exception:
+            pass
         return
     try:
         ensure_db_schema()
 
+        # Bootstrap local auth users, then migrate them into PostgreSQL.
+        try:
+            _ensure_default_profile_users()
+        except Exception:
+            pass
+
         # Auto-sync on startup (can be disabled with DB_AUTO_SYNC=0).
         if os.environ.get("DB_AUTO_SYNC", "1").strip() != "0":
-            from app.database import SessionLocal
-
             session = SessionLocal()
             try:
+                _sync_users_file_to_db(session)
                 # Only sync if DB is empty and an export exists.
-                if session.query(Opportunity).count() == 0 and _find_latest("pipeline_results_*.csv"):
+                latest_pipeline = _find_latest("pipeline_results_*.csv")
+                if session.query(Opportunity).count() == 0 and latest_pipeline:
                     _sync_db_from_pipeline_results(session)
+                elif latest_pipeline:
+                    _refresh_opportunity_budgets_from_pipeline(session)
+                if os.environ.get("BUDGET_PORTAL_ENRICH", "1").strip() != "0":
+                    try:
+                        enrich_limit = int(os.environ.get("BUDGET_PORTAL_ENRICH_LIMIT", "30"))
+                        enrich_result = _enrich_opportunity_budgets_from_portal(
+                            session, max_fetch=enrich_limit
+                        )
+                        if enrich_result.get("updated"):
+                            logger.info("Portal budget enrichment: %s", enrich_result)
+                    except Exception as enrich_exc:
+                        logger.warning("Portal budget enrichment failed: %s", enrich_exc)
                 # Migrate legacy likes.json into DB (best-effort).
                 if AUTH_USERNAME:
                     _migrate_likes_file_to_db(session, user_id=str(AUTH_USERNAME))
+                _sync_generated_documents_from_fs(session)
             finally:
                 session.close()
     except Exception as e:
@@ -3248,6 +3806,18 @@ async def results_excel(user=Depends(require_auth)):
     )
 
 
+@app.post("/admin/enrich-budgets")
+async def admin_enrich_budgets(
+    max_fetch: int = Query(50, ge=1, le=200),
+    user=Depends(require_auth),
+    db=Depends(get_db) if _DB_AVAILABLE else None,
+):
+    """Récupère les budgets manquants depuis marchespublics.gov.ma (fiche consultation)."""
+    if not _DB_AVAILABLE or db is None:
+        raise HTTPException(501, "DB not available")
+    return _enrich_opportunity_budgets_from_portal(db, max_fetch=max_fetch)
+
+
 @app.get("/results/opportunities")
 async def results_opportunities(
     include_excluded: bool = False,
@@ -3276,6 +3846,10 @@ async def results_opportunities(
             liked_ids = _get_liked_ids_db(db, user_id=str(user))
             
             raw_scrape_index = _load_latest_raw_scrape_index()
+            try:
+                pipeline_row_by_id = _load_latest_pipeline_results_index()
+            except Exception:
+                pipeline_row_by_id = {}
 
             out_items = []
             today = date.today()
@@ -3310,8 +3884,17 @@ async def results_opportunities(
                         cand = _normalize_buyer_label(_infer_buyer_from_title(str(getattr(o, "title", "") or "")))
                     buyer_norm = cand or buyer_norm
 
-                objet = str((raw_scrape_index.get(str(oid)) or {}).get("objet") or "").strip()
-                
+                scrape_raw = raw_scrape_index.get(str(oid)) or {}
+                objet = str(scrape_raw.get("objet") or "").strip()
+                prow = pipeline_row_by_id.get(str(oid).strip())
+                portal_b = _portal_cached_budget(str(oid))
+                db_budget = _resolve_opportunity_budget(
+                    db_budget=float(getattr(o, "budget", 0.0) or 0.0),
+                    pipeline_row=prow,
+                    scrape_row=scrape_raw,
+                    portal_budget=portal_b,
+                )
+
                 out_items.append({
                     "id": oid,
                     "reference": oid,
@@ -3327,7 +3910,7 @@ async def results_opportunities(
                     "organization": buyer_norm,
                     "objet": objet,
                     "deadline": o.deadline.isoformat() if getattr(o, "deadline", None) else None,
-                    "budget": getattr(o, "budget", 0.0) or 0.0,
+                    "budget": db_budget,
                     "score": getattr(o, "score", 0.0) or 0.0,
                     "description_technique": getattr(o, "description_technique", "") or "",
                     "description_fonctionnelle": getattr(o, "description_fonctionnelle", "") or "",
@@ -3526,8 +4109,31 @@ async def recommended_opportunities(threshold: float = 0.75, user=Depends(requir
 
 
 @app.get("/results/dossiers")
-async def results_dossiers(user=Depends(require_auth)):
+async def results_dossiers(user=Depends(require_auth), db=Depends(get_db) if _DB_AVAILABLE else None):
     """Liste les dossiers DOCX et PDF générés (recherche récursive)."""
+    if _DB_AVAILABLE and db is not None:
+        try:
+            docs = db.query(GeneratedDocument).order_by(GeneratedDocument.modified_at.desc()).all()
+            docx = [d for d in docs if str(getattr(d, "ext", "")).lower() == "docx"]
+            pdf = [d for d in docs if str(getattr(d, "ext", "")).lower() == "pdf"]
+
+            def _info_row(row: "GeneratedDocument") -> dict:
+                return {
+                    "name": row.file_name,
+                    "path": row.file_path or f"{row.folder}/{row.file_name}",
+                    "size_kb": round(float(row.size_kb or 0.0), 1),
+                    "modified": row.modified_at.isoformat() if getattr(row, "modified_at", None) else None,
+                }
+
+            return {
+                "count": len(docx),
+                "count_pdf": len(pdf),
+                "dossiers": [_info_row(r) for r in docx[:100]],
+                "pdf": [_info_row(r) for r in pdf[:100]],
+            }
+        except Exception:
+            pass
+
     dossiers_dir = PROJECT_ROOT / "dossiers_generes"
     if not dossiers_dir.exists():
         return {"dossiers": [], "count": 0, "count_pdf": 0}
@@ -3555,12 +4161,91 @@ async def results_dossiers(user=Depends(require_auth)):
 async def results_dossiers_index(
     user=Depends(require_auth),
     profile: Optional[str] = Query(None, description="Optional domain/profile filter (AI/DATA/CLOUD/DEV/CYBERSECURITY/GLOBAL)"),
+    db=Depends(get_db) if _DB_AVAILABLE else None,
 ):
     """
     Index des dossiers générés par opportunité, pour l'affichage "Reports" du Dashboard.
 
     Retourne: titre (si disponible via pipeline_results), types de documents, date de génération (mtime), liens de téléchargement.
     """
+    effective_profile = (profile or (_get_user_profile(str(user), db=db).get("profile") or "")).strip().upper()
+    if effective_profile == "CYBER":
+        effective_profile = "CYBERSECURITY"
+    if effective_profile and effective_profile not in {"GLOBAL", "ALL"}:
+        if effective_profile not in {"AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
+            effective_profile = "GLOBAL"
+
+    if _DB_AVAILABLE and db is not None:
+        try:
+            docs = db.query(GeneratedDocument).order_by(GeneratedDocument.generated_at.desc(), GeneratedDocument.modified_at.desc()).all()
+            grouped: dict[str, list[GeneratedDocument]] = {}
+            for row in docs:
+                grouped.setdefault(str(row.folder or ""), []).append(row)
+
+            items = []
+            today = datetime.now().date()
+            for folder, rows in grouped.items():
+                if not folder:
+                    continue
+                deadline = None
+                try:
+                    deadline = next((r.deadline for r in rows if getattr(r, "deadline", None)), None)
+                except Exception:
+                    deadline = None
+                if deadline is None:
+                    continue
+                if deadline < today:
+                    continue
+
+                sample = rows[0]
+                try:
+                    parsed_domains = json.loads(str(getattr(sample, "domains", "[]") or "[]")) if getattr(sample, "domains", None) else []
+                    if not isinstance(parsed_domains, list):
+                        parsed_domains = []
+                except Exception:
+                    parsed_domains = []
+                item = {
+                    "folder": folder,
+                    "opportunity_id": str(getattr(sample, "opportunity_id", "") or ""),
+                    "title": str(getattr(sample, "title", "") or ""),
+                    "service": str(getattr(sample, "service", "") or ""),
+                    "domains": parsed_domains,
+                    "deadline": deadline.isoformat() if deadline else None,
+                    "generated_at": sample.generated_at.isoformat() if getattr(sample, "generated_at", None) else None,
+                    "documents": sorted(
+                        [
+                            {
+                                "name": r.file_name,
+                                "ext": r.ext,
+                                "kind": r.kind,
+                                "modified": r.modified_at.isoformat() if getattr(r, "modified_at", None) else None,
+                                "url": f"/download/dossier/{folder}/{r.file_name}",
+                            }
+                            for r in rows
+                        ],
+                        key=lambda x: (0 if x["kind"] == "technique" else 1, 0 if x["ext"] == "docx" else 1, x["name"]),
+                    ),
+                }
+
+                if effective_profile and effective_profile not in {"GLOBAL", "ALL"}:
+                    doms = [str(d).upper() for d in (item.get("domains") or []) if d]
+                    svc_str = str(item.get("service") or "").upper()
+                    match = (effective_profile in doms) or (effective_profile == "CYBERSECURITY" and "CYBER" in svc_str) or (effective_profile in svc_str)
+                    if not match:
+                        continue
+                items.append(item)
+
+            items.sort(key=lambda x: str(x.get("generated_at") or ""), reverse=True)
+            return {
+                "count": len(items),
+                "items": items,
+                "removed_expired": 0,
+                "removed_unknown_deadline": 0,
+                "profile": effective_profile or "GLOBAL",
+            }
+        except Exception:
+            pass
+
     dossiers_root = PROJECT_ROOT / "dossiers_generes"
     if not dossiers_root.exists():
         return {"count": 0, "items": []}
@@ -3591,15 +4276,6 @@ async def results_dossiers_index(
             if isinstance(doms, list):
                 domains_by_folder.setdefault(folder_name, [str(d).upper() for d in doms if d])
         ids_by_folder.setdefault(folder_name, opportunity_id)
-
-    # Apply profile filter (profile is selected at login). Allow override via query for admin/debug.
-    effective_profile = (profile or (_get_user_profile(str(user)).get("profile") or "")).strip().upper()
-    if effective_profile == "CYBER":
-        effective_profile = "CYBERSECURITY"
-    if effective_profile and effective_profile not in {"GLOBAL", "ALL"}:
-        # Normalize to the supported profile set
-        if effective_profile not in {"AI", "DATA", "CLOUD", "DEV", "CYBERSECURITY"}:
-            effective_profile = "GLOBAL"
 
     items = []
     removed_expired = 0
@@ -3691,10 +4367,31 @@ async def results_dossiers_index(
 
 
 @app.get("/results/dossiers/{consultation_id:path}")
-async def get_consultation_dossiers(consultation_id: str, user=Depends(require_auth)):
+async def get_consultation_dossiers(consultation_id: str, user=Depends(require_auth), db=Depends(get_db) if _DB_AVAILABLE else None):
     """Retourne la liste des dossiers générés pour une consultation."""
     # Keep folder naming aligned with `core/pipeline.py` (sanitization + truncation).
     folder = _consultation_folder_name(consultation_id)
+    if _DB_AVAILABLE and db is not None:
+        try:
+            rows = (
+                db.query(GeneratedDocument)
+                .filter(or_(GeneratedDocument.folder == folder, GeneratedDocument.opportunity_id == consultation_id))
+                .all()
+            )
+            if rows:
+                files = [
+                    {
+                        "name": r.file_name,
+                        "type": str(r.ext or "").lower(),
+                        "url": f"/download/dossier/{r.folder}/{r.file_name}",
+                    }
+                    for r in rows
+                ]
+                files.sort(key=lambda x: (not ("technique" in x["name"].lower()), x["type"], x["name"]))
+                return {"files": files}
+        except Exception:
+            pass
+
     dossiers_dir = PROJECT_ROOT / "dossiers_generes" / folder
 
     # Backward-compat fallback for older folder naming (only invalid path chars replaced).

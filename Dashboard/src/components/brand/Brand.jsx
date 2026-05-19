@@ -1,7 +1,7 @@
 import React from "react"
 import logo from "@/assets/alexsys-logo.png"
 
-export function Brand({ compact = false, className = "" }) {
+export function Brand({ compact = false, className = "", titleClassName = "", subtitleClassName = "" }) {
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <div className="relative">
@@ -13,11 +13,11 @@ export function Brand({ compact = false, className = "" }) {
         />
       </div>
       <div className="leading-tight">
-        <div className={`font-semibold tracking-tight ${compact ? "text-base" : "text-base"}`}>
+        <div className={`font-semibold tracking-tight ${compact ? "text-base" : "text-base"} ${titleClassName}`}>
           Alexsys Solutions
         </div>
         {!compact ? (
-          <div className="text-xs text-muted-foreground">
+          <div className={`text-xs text-muted-foreground ${subtitleClassName}`}>
             AI Procurement
           </div>
         ) : null}

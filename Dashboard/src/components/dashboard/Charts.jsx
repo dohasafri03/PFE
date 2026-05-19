@@ -5,6 +5,7 @@ import {
 } from "recharts"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toDeadlineComparableDate } from "@/lib/date"
+import { normalizeProfile, normalizeSubProfile } from "@/lib/profile"
 
 const COLORS = {
   HOT: "#EF4444",
@@ -67,7 +68,27 @@ function TooltipCard({ active, payload, label }) {
   )
 }
 
-export function Charts({ data }) {
+function upperTokens(value) {
+  return String(value || "")
+    .toUpperCase()
+    .split(/[\/,|]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function getOpportunityDomains(item) {
+  const rawDomains = Array.isArray(item?.domains) ? item.domains : Array.isArray(item?.domain) ? item.domain : []
+  const domainList = rawDomains.map((entry) => String(entry || "").trim().toUpperCase()).filter(Boolean)
+  if (domainList.length) return domainList
+
+  const fallback = new Set([
+    ...upperTokens(item?.sector),
+    ...upperTokens(item?.service),
+  ])
+  return Array.from(fallback)
+}
+
+export function Charts({ data, profile = "GLOBAL", subProfile = null, subFilter = "ALL" }) {
   const uniqueData = useMemo(() => {
     const list = Array.isArray(data) ? data : []
     const byId = new Map()
@@ -93,6 +114,37 @@ export function Charts({ data }) {
 
   // Bar Chart Data: Opportunities by Sector
   const barData = useMemo(() => {
+    const p = normalizeProfile(profile)
+    const sp = normalizeSubProfile(subProfile)
+    const sf = String(subFilter || "ALL").trim().toUpperCase()
+
+    if (p !== "GLOBAL" && p !== "ALL") {
+      if (p === "DATA") {
+        const aiOnly = sp === "AI" || sf === "AI"
+        if (aiOnly) {
+          const totalBudget = uniqueData.reduce((sum, item) => sum + (Number(item?.budget) || 0), 0)
+          return [{ name: "AI", count: uniqueData.length, budget: totalBudget }]
+        }
+
+        const sectors = {
+          DATA: { name: "DATA", count: 0, budget: 0 },
+          AI: { name: "AI", count: 0, budget: 0 },
+        }
+
+        uniqueData.forEach((item) => {
+          const doms = getOpportunityDomains(item)
+          const bucket = doms.includes("AI") ? "AI" : "DATA"
+          sectors[bucket].count += 1
+          sectors[bucket].budget += Number(item?.budget) || 0
+        })
+
+        return Object.values(sectors).filter((row) => row.count > 0)
+      }
+
+      const totalBudget = uniqueData.reduce((sum, item) => sum + (Number(item?.budget) || 0), 0)
+      return [{ name: p, count: uniqueData.length, budget: totalBudget }]
+    }
+
     const sectors = {}
     uniqueData.forEach(d => {
       if (!sectors[d.sector]) sectors[d.sector] = { name: d.sector, count: 0, budget: 0 }
@@ -102,7 +154,18 @@ export function Charts({ data }) {
     const rows = Object.values(sectors)
     rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
     return rows
-  }, [uniqueData])
+  }, [uniqueData, profile, subProfile, subFilter])
+
+  const barChartTitle = useMemo(() => {
+    const p = normalizeProfile(profile)
+    const sp = normalizeSubProfile(subProfile)
+    const sf = String(subFilter || "ALL").trim().toUpperCase()
+
+    if (p === "GLOBAL" || p === "ALL") return "Opportunities by Sector"
+    if (p === "DATA" && (sp === "AI" || sf === "AI")) return "AI Opportunities"
+    if (p === "DATA") return "Opportunities by Data Scope"
+    return `Opportunities for ${p}`
+  }, [profile, subProfile, subFilter])
 
   // Timeline Data: cumulative opportunities by deadline date (upcoming)
   const lineData = useMemo(() => {
@@ -163,7 +226,7 @@ export function Charts({ data }) {
       {/* Sector Bar Chart */}
       <Card className="min-w-0 bg-[#F3F4F6] border border-black/5 shadow-sm dark:bg-white/5 dark:border-white/10">
         <CardHeader>
-          <CardTitle>Opportunities by Sector</CardTitle>
+          <CardTitle>{barChartTitle}</CardTitle>
         </CardHeader>
         <CardContent className="h-72 min-w-0">
           <ResponsiveContainer width="100%" height="100%">

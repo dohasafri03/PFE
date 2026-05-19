@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Loader2, ExternalLink, Heart, Sparkles, Timer, BrainCircuit, Database } from "lucide-react"
 import { formatShortDate, toDeadlineComparableDate } from "@/lib/date"
+import { formatBudget } from "@/lib/budget"
 
 import {
   Dialog,
@@ -33,7 +34,6 @@ export function Dashboard() {
   const [selectedItem, setSelectedItem] = useState(null)
   const [detailTab, setDetailTab] = useState("overview")
   const [subFilter, setSubFilter] = useState("ALL") // DATA only: ALL | AI
-  const [includeExcluded, setIncludeExcluded] = useState(false)
   const [visibleData, setVisibleData] = useState(null)
   const [likePending, setLikePending] = useState(() => new Set())
   const lastViewedIdRef = useRef(null)
@@ -119,13 +119,13 @@ export function Dashboard() {
   useEffect(() => {
     setProfileLoading(true)
     // Fetch a broad list once; filtering is done client-side (keeps DATA including AI).
-    fetchOpportunities("GLOBAL", { includeExcluded })
+    fetchOpportunities("GLOBAL")
       .then((res) => setAllData(res))
       .finally(() => {
         setProfileLoading(false)
         setLoading(false)
       })
-  }, [user?.username, includeExcluded])
+  }, [user?.username])
 
   const data = useMemo(() => {
     // If user is DATA with sub_profile=AI (ai account), default to Only AI view.
@@ -134,8 +134,6 @@ export function Dashboard() {
       : subFilter
     const filtered = filterOpportunities(allData, { profile, subFilter: sf })
 
-    // When the user explicitly opts in to see EXCLUDED, keep them visible even if they don't match
-    // the current profile keyword/domain filter (they often have empty domains).
     const now = new Date()
     now.setHours(0, 0, 0, 0)
 
@@ -156,24 +154,8 @@ export function Dashboard() {
       return Array.from(byId.values())
     }
 
-    const activeUnique = dedupeById(activeOnly)
-
-    if (!includeExcluded) return activeUnique
-    const excluded = (Array.isArray(allData) ? allData : []).filter((o) => String(o?.level || o?.priority || "").toUpperCase() === "EXCLUDED")
-    if (!excluded.length) return activeUnique
-
-    const filteredArr = activeUnique
-    const byId = new Set(filteredArr.map((o) => String(o?.id || o?.reference || "")).filter(Boolean))
-    // Put EXCLUDED first so users immediately see the effect of the toggle.
-    const excludedFirst = excluded.filter((o) => {
-      const key = String(o?.id || o?.reference || "")
-      if (!key || byId.has(key)) return false
-      const dt = toDeadlineComparableDate(o?.deadline)
-      if (!dt) return false
-      return dt >= now
-    })
-    return [...excludedFirst, ...filteredArr]
-  }, [allData, profile, subFilter, effectiveSubProfile, includeExcluded])
+    return dedupeById(activeOnly)
+  }, [allData, profile, subFilter, effectiveSubProfile])
 
   // Align KPI/Charts counts with the table's visible (post-search/filter) rows.
   const analyticsData = Array.isArray(visibleData) ? visibleData : data
@@ -199,15 +181,7 @@ export function Dashboard() {
     return { title: "Vue d'ensemble", subtitle: "Analysez et gérez vos opportunités d'appels d'offres publics IT.", iconLeft: null, iconRight: null, showAiBadge: false }
   }, [profile])
 
-  const formatMoney = (amount, fallback = "-") => {
-    if (amount == null) return fallback
-    const value = Number(amount)
-    if (!Number.isFinite(value) || value <= 0) return fallback
-    const fixed = value.toFixed(2)
-    const [intPart, decPart] = fixed.split(".")
-    const grouped = intPart.replace(/\\B(?=(\\d{3})+(?!\\d))/g, " ")
-    return `${grouped},${decPart} DH`
-  }
+  const formatMoney = (amount, fallback = "-") => formatBudget(amount, fallback)
 
   useEffect(() => {
     const oid = location?.state?.openOpportunityId
@@ -352,22 +326,10 @@ export function Dashboard() {
         </div>
 
         <KPICards data={analyticsData} profile={profile} />
-        <Charts data={analyticsData} />
+        <Charts data={analyticsData} profile={profile} subProfile={effectiveSubProfile} subFilter={subFilter} />
         
         <div className={`mt-4 transition-opacity ${profileLoading ? "opacity-60" : "opacity-100"}`}>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-            <h2 className="text-xl font-semibold tracking-tight">Liste des opportunités</h2>
-            <button
-              type="button"
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
-                includeExcluded ? "bg-white/10 border-white/15 text-foreground" : "bg-transparent border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5"
-              }`}
-              onClick={() => setIncludeExcluded((v) => !v)}
-              title="Afficher aussi les opportunités EXCLUDED"
-            >
-              {includeExcluded ? "Including EXCLUDED" : "Hide EXCLUDED"}
-            </button>
-          </div>
+          <h2 className="text-xl font-semibold tracking-tight mb-4">Liste des opportunités</h2>
           {profileLoading ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4">
               <div className="h-4 w-48 bg-white/10 rounded animate-pulse mb-3" />
@@ -401,7 +363,7 @@ export function Dashboard() {
         </div>
 
         <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
-          <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[85vh] overflow-y-auto border-black/10 bg-white dark:border-white/10 dark:bg-[#050915]/90 dark:backdrop-blur-xl dark:shadow-[0_30px_120px_rgba(0,0,0,0.70)]">
+          <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[85vh] overflow-y-auto border-black/10 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#050915] dark:shadow-[0_30px_120px_rgba(0,0,0,0.78)]">
             {selectedItem && (
               <>
                 <DialogHeader className="sr-only">
@@ -487,7 +449,7 @@ export function Dashboard() {
 
                     return (
                       <>
-                        <div className="rounded-2xl border border-black/5 bg-[#F3F4F6] p-4 shadow-sm dark:border-white/10 dark:bg-[#0B1220]/70 dark:shadow-[0_18px_70px_rgba(0,0,0,0.45)] dark:backdrop-blur sm:p-5">
+                        <div className="rounded-2xl border border-black/5 bg-[#F3F4F6] p-4 shadow-sm dark:border-white/10 dark:bg-[#0B1220] dark:shadow-[0_18px_70px_rgba(0,0,0,0.45)] sm:p-5">
                           <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4 items-start">
                             <div className="min-w-0">
                               <div className="flex items-start justify-between gap-3">
@@ -547,11 +509,11 @@ export function Dashboard() {
                             </div>
 
                             <div className="grid gap-3">
-                              <div className="rounded-xl border border-black/5 bg-white/70 p-4 shadow-sm dark:border-white/10 dark:bg-white/5 dark:shadow-[0_16px_50px_rgba(0,0,0,0.40)] dark:backdrop-blur">
+                              <div className="rounded-xl border border-black/5 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-[#0F172A] dark:shadow-[0_16px_50px_rgba(0,0,0,0.40)]">
                                 <div className="text-xs text-muted-foreground">Budget</div>
                                 <div className="text-2xl font-bold mt-1">{formatMoney(selectedItem.budget)}</div>
                               </div>
-                              <div className="rounded-xl border border-black/5 bg-white/70 p-4 shadow-sm flex items-center justify-between gap-3 dark:border-white/10 dark:bg-white/5 dark:shadow-[0_16px_50px_rgba(0,0,0,0.40)] dark:backdrop-blur">
+                              <div className="rounded-xl border border-black/5 bg-white p-4 shadow-sm flex items-center justify-between gap-3 dark:border-white/10 dark:bg-[#0F172A] dark:shadow-[0_16px_50px_rgba(0,0,0,0.40)]">
                                 <div>
                                   <div className="text-xs text-muted-foreground">Deadline</div>
                                   <div className="text-sm font-semibold mt-1">{formatShortDate(selectedItem.deadline)}</div>
@@ -568,15 +530,15 @@ export function Dashboard() {
                         <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
                           <div className="space-y-4">
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                              <div className="rounded-xl border border-black/5 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/5 dark:backdrop-blur">
+                              <div className="rounded-xl border border-black/5 bg-white p-3 shadow-sm dark:border-white/10 dark:bg-[#0F172A]">
                                 <div className="text-xs text-muted-foreground">Budget</div>
                                 <div className="text-sm font-semibold mt-1">{formatMoney(selectedItem.budget)}</div>
                               </div>
-                              <div className="rounded-xl border border-black/5 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/5 dark:backdrop-blur">
+                              <div className="rounded-xl border border-black/5 bg-white p-3 shadow-sm dark:border-white/10 dark:bg-[#0F172A]">
                                 <div className="text-xs text-muted-foreground">Deadline</div>
                                 <div className="text-sm font-semibold mt-1">{formatShortDate(selectedItem.deadline)}</div>
                               </div>
-                              <div className="rounded-xl border border-black/5 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/5 dark:backdrop-blur">
+                              <div className="rounded-xl border border-black/5 bg-white p-3 shadow-sm dark:border-white/10 dark:bg-[#0F172A]">
                                 <div className="text-xs text-muted-foreground">Score</div>
                                 <div className="mt-2 flex items-center gap-2">
                                   <div className="flex-1">{progress(scorePct, scoreTone)}</div>
@@ -585,7 +547,7 @@ export function Dashboard() {
                               </div>
                             </div>
 
-                            <div className="rounded-2xl border border-black/5 bg-white/70 shadow-sm dark:border-white/10 dark:bg-[#0B1220]/55 dark:shadow-[0_18px_70px_rgba(0,0,0,0.45)] dark:backdrop-blur">
+                            <div className="rounded-2xl border border-black/5 bg-white shadow-sm dark:border-white/10 dark:bg-[#0B1220] dark:shadow-[0_18px_70px_rgba(0,0,0,0.45)]">
                               <div className="flex items-center gap-2 p-2 border-b border-black/5 dark:border-white/10 overflow-x-auto">
                                 {[
                                   { id: "overview", label: "Overview" },
@@ -648,7 +610,7 @@ export function Dashboard() {
                                     {similar.length ? (
                                       <div className="flex gap-3 overflow-x-auto pb-2">
                                         {similar.map((o) => (
-                                          <div key={o.id} className="min-w-[260px] max-w-[260px] rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 hover:bg-white/10 transition-colors">
+                                          <div key={o.id} className="min-w-[260px] max-w-[260px] rounded-2xl border border-black/5 bg-white p-3 transition-colors hover:bg-slate-50 dark:border-white/10 dark:bg-[#0F172A] dark:hover:bg-[#162032]">
                                             <div className="text-sm font-semibold leading-snug whitespace-normal break-words max-h-16 overflow-auto pr-1" title={o.title}>
                                               {o.title}
                                             </div>

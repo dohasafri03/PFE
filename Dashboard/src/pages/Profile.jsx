@@ -24,11 +24,74 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { Heart, Sparkles, FileText, TrendingUp, Clock, User, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 
-const GlassCard = ({ children, className = "" }) => (
-  <Card className={`bg-white/5 backdrop-blur border-white/10 hover:shadow-md hover:shadow-black/20 transition-all ${className}`}>
+/** Cartes alignées sur KPICards (Dashboard) : clair #F3F4F6, sombre glass. */
+const DashboardSurfaceCard = ({ children, className = "" }) => (
+  <Card
+    className={[
+      "rounded-xl border border-black/5 bg-[#F3F4F6] shadow-sm transition-all duration-200",
+      "dark:border-white/10 dark:bg-white/5 dark:shadow-[0_18px_60px_rgba(0,0,0,0.45)]",
+      "hover:-translate-y-0.5 hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)] dark:hover:border-white/15",
+      className,
+    ].join(" ")}
+  >
     {children}
   </Card>
 );
+
+const profileMetricTones = {
+  red: {
+    ring: "ring-red-500/20",
+    iconBg: "bg-red-500/10",
+    iconText: "text-red-600 dark:text-red-400",
+  },
+  green: {
+    ring: "ring-green-500/20",
+    iconBg: "bg-green-500/10",
+    iconText: "text-green-600 dark:text-green-400",
+  },
+  purple: {
+    ring: "ring-[#6C63FF]/20",
+    iconBg: "bg-[#6C63FF]/10",
+    iconText: "text-[#6C63FF] dark:text-[#a59cf7]",
+  },
+  orange: {
+    ring: "ring-orange-500/20",
+    iconBg: "bg-orange-500/10",
+    iconText: "text-orange-600 dark:text-orange-400",
+  },
+};
+
+function ProfileMetricCard({ title, value, icon, tone = "blue" }) {
+  const t = profileMetricTones[tone] || profileMetricTones.purple
+  return (
+    <Card
+      className={[
+        "group rounded-xl p-0 ring-1 transition-all duration-200 min-h-[120px] sm:min-h-[128px]",
+        "bg-[#F3F4F6] border border-black/5 shadow-sm",
+        "hover:bg-[#1a0b2e] hover:border-white/10 hover:text-white",
+        "hover:-translate-y-0.5 hover:shadow-[0_18px_50px_rgba(15,23,42,0.10)]",
+        "dark:bg-white/5 dark:border-white/10 dark:shadow-[0_18px_60px_rgba(0,0,0,0.45)]",
+        t.ring,
+      ].join(" ")}
+    >
+      <CardContent className="flex h-full flex-col justify-center px-5 py-6 sm:px-6 sm:py-7">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <div
+              className={`h-11 w-11 shrink-0 rounded-xl ${t.iconBg} ring-1 ring-border flex items-center justify-center transition-colors group-hover:bg-white/10 group-hover:ring-white/20`}
+            >
+              <div className={`${t.iconText} transition-colors group-hover:text-white [&>svg]:h-5 [&>svg]:w-5`}>{icon}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-muted-foreground transition-colors group-hover:text-white/80">{title}</div>
+              <div className="mt-2 text-2xl font-bold tracking-tight text-foreground truncate transition-colors group-hover:text-white">{value}</div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 const getInitials = (value) => {
   const raw = String(value || "").trim();
@@ -145,10 +208,10 @@ export function Profile() {
     const dossiers = stats?.generated_dossiers_count ?? 0;
     const avg = stats?.avg_score_selected ?? 0;
     return [
-      { title: "Liked Opportunities", value: liked, icon: <Heart className="h-4 w-4 text-red-500" /> },
-      { title: "Recommended", value: rec, icon: <Sparkles className="h-4 w-4 text-green-400" /> },
-      { title: "Generated Dossiers", value: dossiers, icon: <FileText className="h-4 w-4 text-primary" /> },
-      { title: "Avg Score (Selected)", value: avg, icon: <TrendingUp className="h-4 w-4 text-orange-400" /> },
+      { title: "Liked Opportunities", value: liked, tone: "red", icon: <Heart className="h-5 w-5" /> },
+      { title: "Recommended", value: rec, tone: "green", icon: <Sparkles className="h-5 w-5" /> },
+      { title: "Generated Dossiers", value: dossiers, tone: "purple", icon: <FileText className="h-5 w-5" /> },
+      { title: "Avg Score (Selected)", value: avg, tone: "orange", icon: <TrendingUp className="h-5 w-5" /> },
     ];
   }, [stats]);
 
@@ -232,15 +295,15 @@ export function Profile() {
   const renderActivityIcon = (type) => {
     switch (type) {
       case "liked_opportunity":
-        return <Heart className="h-4 w-4 text-red-500" />;
+        return <Heart className="h-4 w-4 text-red-600 dark:text-red-400" />;
       case "unliked_opportunity":
-        return <Heart className="h-4 w-4 text-muted-foreground" />;
+        return <Heart className="h-4 w-4 text-muted-foreground opacity-70" />;
       case "viewed_opportunity":
-        return <Clock className="h-4 w-4 text-muted-foreground" />;
+        return <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />;
       case "generated_document":
-        return <FileText className="h-4 w-4 text-primary" />;
+        return <FileText className="h-4 w-4 text-[#6C63FF] dark:text-[#a59cf7]" />;
       case "recommendation_alert":
-        return <Sparkles className="h-4 w-4 text-green-400" />;
+        return <Sparkles className="h-4 w-4 text-green-600 dark:text-green-400" />;
       default:
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
@@ -248,34 +311,57 @@ export function Profile() {
 
   return (
     <Layout>
-      <div className="flex flex-col gap-6">
-        <GlassCard className="overflow-hidden">
-          <CardContent className="p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <Avatar className="h-16 w-16 ring-1 ring-white/10">
-                  <AvatarImage src={(meProfile?.avatar_url || user?.avatar_url) || "/avatars/01.png"} alt="@user" />
-                  <AvatarFallback>{((meProfile?.display_name || user?.display_name || user?.username || "AD").slice(0, 2)).toUpperCase()}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <div className="text-2xl font-bold">{meProfile?.display_name || user?.display_name || user?.username || "Admin"}</div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="secondary" className="bg-white/10 text-foreground">{meProfile?.role || user?.role || "Admin"}</Badge>
-                    <span className="text-xs text-muted-foreground">AI Procurement Dashboard</span>
-                  </div>
+      <div className="flex min-w-0 max-w-full flex-col gap-6">
+        {/* Bandeau identique au Dashboard (dégradé + texte blanc) */}
+        <div className="alexsys-animated-header relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-r from-[#00C2D1] via-[#3B82F6] to-[#1a0b2e] p-5 text-white shadow-[0_18px_60px_rgba(0,0,0,0.35)] sm:p-6">
+          <div className="pointer-events-none absolute inset-0 opacity-50">
+            <div className="absolute -top-24 -left-24 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+            <div className="absolute -bottom-28 -right-28 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+          </div>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-[#1a0b2e]/85" />
+          <div className="pointer-events-none absolute inset-0 opacity-35 mix-blend-overlay">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.22),transparent_45%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.16),transparent_50%),linear-gradient(120deg,rgba(255,255,255,0.08),transparent_40%,rgba(255,255,255,0.10))]" />
+          </div>
+          <div className="relative z-10 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <Avatar className="h-14 w-14 shrink-0 ring-2 ring-white/25 shadow-lg sm:h-16 sm:w-16">
+                <AvatarImage src={(meProfile?.avatar_url || user?.avatar_url) || "/avatars/01.png"} alt="@user" />
+                <AvatarFallback className="bg-white/15 text-sm text-white font-bold sm:text-base">
+                  {((meProfile?.display_name || user?.display_name || user?.username || "AD").slice(0, 2)).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <div className="text-2xl sm:text-3xl font-bold tracking-tight truncate text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
+                  {meProfile?.display_name || user?.display_name || user?.username || "Admin"}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <Badge className="border-0 bg-white/20 text-white hover:bg-white/25 backdrop-blur-sm">
+                    {meProfile?.role || user?.role || "Admin"}
+                  </Badge>
+                  <span className="text-sm sm:text-base font-medium text-white/85 drop-shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
+                    AI Procurement Dashboard
+                  </span>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={openEdit}>
-                  Edit profile
-                </Button>
-                <Button variant="outline" onClick={openPassword}>
-                  Change password
-                </Button>
-              </div>
             </div>
-          </CardContent>
-        </GlassCard>
+            <div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
+              <Button
+                variant="outline"
+                onClick={openEdit}
+                className="h-9 rounded-full border-white/20 bg-black/20 px-3 text-xs text-white backdrop-blur hover:bg-white/15 hover:text-white sm:px-4 sm:text-sm"
+              >
+                Edit profile
+              </Button>
+              <Button
+                variant="outline"
+                onClick={openPassword}
+                className="h-9 rounded-full border-white/20 bg-black/20 px-3 text-xs text-white backdrop-blur hover:bg-white/15 hover:text-white sm:px-4 sm:text-sm"
+              >
+                Change password
+              </Button>
+            </div>
+          </div>
+        </div>
 
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
           <DialogContent className="w-full max-w-[420px] rounded-2xl border border-slate-200/70 bg-white p-7 shadow-2xl shadow-indigo-100/60 dark:border-white/10 dark:bg-[#1E1E2E]">
@@ -468,35 +554,27 @@ export function Profile() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, delay: 0.05 * idx }}
             >
-              <GlassCard className="hover:-translate-y-0.5">
-                <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-                  <CardTitle className="text-sm font-medium">{c.title}</CardTitle>
-                  {c.icon}
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{c.value}</div>
-                </CardContent>
-              </GlassCard>
+              <ProfileMetricCard title={c.title} value={c.value} icon={c.icon} tone={c.tone} />
             </motion.div>
           ))}
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <GlassCard>
+          <DashboardSurfaceCard className="overflow-hidden rounded-2xl">
             <CardHeader>
-              <CardTitle>Activity Timeline</CardTitle>
+              <CardTitle className="text-base font-semibold tracking-tight text-foreground">Activity Timeline</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="relative pl-4">
-                <div className="absolute left-1 top-0 bottom-0 w-px bg-white/10" />
+                <div className="absolute left-1 top-0 bottom-0 w-px bg-black/10 dark:bg-white/15" />
                 <div className="space-y-4">
                   {(activityPageItems || []).map((e, idx) => (
                     <div key={`${e.created_at || idx}-${idx}`} className="relative">
-                      <div className="absolute -left-1.5 top-1 h-3 w-3 rounded-full bg-background ring-2 ring-white/10" />
+                      <div className="absolute -left-1.5 top-1 h-3 w-3 rounded-full bg-background ring-2 ring-black/10 dark:ring-white/20" />
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5">{renderActivityIcon(e.type)}</div>
-                        <div className="flex-1">
-                          <div className="text-sm font-medium">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-foreground">
                             {e.type?.replaceAll("_", " ") || "activity"}
                             {e.opportunity_id ? (
                               <span className="text-xs text-muted-foreground"> • {e.opportunity_id}</span>
@@ -515,7 +593,7 @@ export function Profile() {
               </div>
 
               {Array.isArray(activity) && activity.length > activityPageSize ? (
-                <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between gap-3">
+                <div className="mt-4 pt-4 border-t border-black/5 dark:border-white/10 flex items-center justify-between gap-3">
                   <div className="text-xs text-muted-foreground">
                     Page {Math.min(Math.max(1, activityPage), activityTotalPages)} / {activityTotalPages}
                   </div>
@@ -523,7 +601,7 @@ export function Profile() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-8"
+                      className="h-8 border-black/10 bg-white/80 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                       disabled={activityPage <= 1}
                       onClick={() => setActivityPage((p) => Math.max(1, p - 1))}
                     >
@@ -532,7 +610,7 @@ export function Profile() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-8"
+                      className="h-8 border-black/10 bg-white/80 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                       disabled={activityPage >= activityTotalPages}
                       onClick={() => setActivityPage((p) => Math.min(activityTotalPages, p + 1))}
                     >
@@ -542,7 +620,7 @@ export function Profile() {
                 </div>
               ) : null}
             </CardContent>
-          </GlassCard>
+          </DashboardSurfaceCard>
         </div>
 
       </div>

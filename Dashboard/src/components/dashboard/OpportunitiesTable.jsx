@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { formatShortDate, parseDeadlineDate } from "@/lib/date"
+import { formatBudget } from "@/lib/budget"
 
 const getLevelBadge = (level) => {
   switch (level) {
@@ -41,16 +42,6 @@ const getLevelBadge = (level) => {
     default:
       return <Badge variant="outline">{level}</Badge>
   }
-}
-
-const formatCurrency = (amount) => {
-  if (amount == null) return "-"
-  const value = Number(amount)
-  if (!Number.isFinite(value) || value <= 0) return "-"
-  const fixed = value.toFixed(2)
-  const [intPart, decPart] = fixed.split(".")
-  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ")
-  return `${grouped},${decPart} DH`
 }
 
 const normalizeBuyer = (b) => {
@@ -145,11 +136,44 @@ const DOMAIN_STYLES = {
   CYBERSECURITY: "bg-red-500/15 text-red-700 dark:text-red-200 ring-1 ring-red-500/25",
 }
 
-const DomainTags = ({ domains }) => {
-  const list = Array.isArray(domains) ? domains : []
+const normalizeDomainKey = (value) => {
+  const key = String(value || "").trim().toUpperCase()
+  if (!key) return ""
+  if (key === "CYBER") return "CYBERSECURITY"
+  return Object.prototype.hasOwnProperty.call(DOMAIN_STYLES, key) ? key : ""
+}
+
+const getColoredDomains = (domains, service) => {
+  const out = []
+  const seen = new Set()
+
+  const push = (value) => {
+    const key = normalizeDomainKey(value)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    out.push(key)
+  }
+
+  if (Array.isArray(domains)) {
+    domains.forEach(push)
+  } else if (domains) {
+    push(domains)
+  }
+
+  String(service || "")
+    .split(/[\/,|]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach(push)
+
+  return out
+}
+
+const DomainTags = ({ domains, service }) => {
+  const list = getColoredDomains(domains, service)
   if (!list.length) return null
   return (
-    <div className="mt-1 flex flex-wrap gap-1">
+    <div className="flex flex-wrap gap-1" title={list.join(" / ")}>
       {list.slice(0, 3).map((d) => {
         const key = String(d || "").toUpperCase()
         const cls = DOMAIN_STYLES[key] || "bg-foreground/5 text-muted-foreground ring-1 ring-border"
@@ -250,10 +274,14 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
       header: "Service",
       cell: ({ row }) => {
         const v = row.getValue("service") || ""
+        const coloredDomains = getColoredDomains(row.original?.domains || row.original?.domain, v)
         return (
           <div className="max-w-[160px]" title={v}>
-            <div className="truncate">{v || "-"}</div>
-            <DomainTags domains={row.original?.domains || row.original?.domain} />
+            {coloredDomains.length ? (
+              <DomainTags domains={row.original?.domains || row.original?.domain} service={v} />
+            ) : (
+              <div className="text-muted-foreground">-</div>
+            )}
           </div>
         )
       },
@@ -321,7 +349,7 @@ export function OpportunitiesTable({ data, onRowClick, onToggleLike, onVisibleDa
           </Button>
         )
       },
-      cell: ({ row }) => <div>{formatCurrency(row.getValue("budget"))}</div>,
+      cell: ({ row }) => <div>{formatBudget(row.getValue("budget"))}</div>,
     },
     {
       accessorKey: "deadline",

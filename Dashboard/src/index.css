@@ -190,6 +190,94 @@
   }
 }
 
+/* ── Login page (enterprise AI) ── */
+@keyframes login-gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes login-hex-pulse {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50% { opacity: 0.28; transform: scale(1.06); }
+}
+
+@keyframes login-scan {
+  0% { top: -4%; opacity: 0; }
+  8% { opacity: 0.7; }
+  92% { opacity: 0.7; }
+  100% { top: 104%; opacity: 0; }
+}
+
+@keyframes login-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-10px); }
+  30% { transform: translateX(10px); }
+  45% { transform: translateX(-8px); }
+  60% { transform: translateX(8px); }
+  75% { transform: translateX(-4px); }
+  90% { transform: translateX(4px); }
+}
+
+@layer utilities {
+  .login-animated-gradient {
+    background: linear-gradient(
+      -45deg,
+      #0a0a1a,
+      #0c1238,
+      #1a0a32,
+      #0a1528,
+      #0a0a1a
+    );
+    background-size: 400% 400%;
+    animation: login-gradient-shift 14s ease infinite;
+  }
+
+  .login-circuit-grid {
+    background-image:
+      linear-gradient(rgba(0, 212, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 255, 0.06) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse at center, black 20%, transparent 75%);
+  }
+
+  .login-hex-pulse {
+    animation: login-hex-pulse 5s ease-in-out infinite;
+  }
+
+  .login-card-scan::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(0, 212, 255, 0.45),
+      transparent
+    );
+    pointer-events: none;
+    animation: login-scan 5s linear infinite;
+    z-index: 2;
+  }
+
+  .login-shake {
+    animation: login-shake 0.5s ease-in-out;
+  }
+
+  .login-input-focus:focus-visible {
+    border-color: #00d4ff !important;
+    box-shadow:
+      0 0 0 2px rgba(6, 182, 212, 0.2),
+      0 0 20px rgba(0, 212, 255, 0.15) !important;
+  }
+
+  .login-input-error {
+    border-color: rgb(239 68 68) !important;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.2) !important;
+  }
+}
+
 @layer utilities {
   .alexsys-app-bg {
     /* Light default */
