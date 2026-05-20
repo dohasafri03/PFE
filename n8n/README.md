@@ -49,6 +49,17 @@ npx n8n start
 
 Ouvrir : http://localhost:5678
 
+### Connexion n8n (important — version 2.x)
+
+Depuis **n8n 2.x**, les variables `N8N_BASIC_AUTH_*` (**alexsys / alexsys2026**) **ne fonctionnent plus**.
+
+- **Première visite** : écran « Set up owner account » → choisissez un **email** et un **mot de passe** (ce sont vos identifiants n8n).
+- **Visites suivantes** : connectez-vous avec cet **email + mot de passe** (pas alexsys).
+- Utilisez **http://localhost:5678** (évitez de mélanger `127.0.0.1` et `localhost` pour les cookies).
+- Mot de passe oublié : exécutez `scripts\reset_n8n_login.bat` puis recréez le compte propriétaire.
+
+**Deux bases n8n possibles (Docker)** : `docker compose` créait parfois le volume `marche_ai_platform_n8n_data`, alors que `start_n8n.bat` utilise `n8n_data`. Les identifiants ne sont pas les mêmes entre les deux. Le projet force maintenant le volume **`n8n_data`** partout. Après `docker compose up -d`, utilisez les mêmes email/mot de passe que sur l’instance qui fonctionnait déjà.
+
 ### 3. Importer le workflow
 
 1. Ouvrir n8n → **Workflows** → **Import from File**
